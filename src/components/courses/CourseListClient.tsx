@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import AppNav from '@/components/layout/AppNav';
 import type { Course, Profile } from '@/types/db';
 
 interface Props {
@@ -12,7 +12,6 @@ interface Props {
 }
 
 export default function CourseListClient({ initialCourses, profile }: Props) {
-  const router = useRouter();
   const supabase = createClient();
   const isTeacher = profile?.role === 'teacher';
 
@@ -22,12 +21,6 @@ export default function CourseListClient({ initialCourses, profile }: Props) {
   const [subject, setSubject] = useState('Математика');
   const [hours, setHours] = useState(170);
   const [saving, setSaving] = useState(false);
-
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    router.push('/login');
-    router.refresh();
-  }
 
   async function handleCreateCourse(e: React.FormEvent) {
     e.preventDefault();
@@ -64,69 +57,23 @@ export default function CourseListClient({ initialCourses, profile }: Props) {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
-        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center font-extrabold text-lg">
-              ∑
-            </div>
-            <div>
-              <div className="text-sm sm:text-base font-extrabold text-slate-900">MathHub</div>
-              <div className="text-[11px] text-slate-500">Выбери класс и предмет</div>
-            </div>
-          </div>
+      <AppNav profile={profile} />
 
-          <div className="flex items-center gap-2.5">
-            {profile ? (
-              <>
-                {isTeacher && (
-                    <>
-                  <Link
-                    href="/teacher/submissions"
-                    className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition"
-                  >
-                    📥 Проверка ДЗ
-                  </Link><Link
-                    href="/teacher/journal"
-                    className="px-2.5 sm:px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-bold whitespace-nowrap transition"
-                    >
-                    📊 Журнал
-                    </Link></>
-                )}
-                <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 text-xs font-semibold text-slate-700">
-                  {isTeacher ? '🛠️ Учитель' : '🎓 Ученик'} · {profile.full_name}
-                </span>
-                <button
-                  onClick={handleLogout}
-                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-700 text-xs font-bold text-slate-600 transition"
-                >
-                  Выйти
-                </button>
-              </>
-            ) : (
-              <Link
-                href="/login"
-                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition"
-              >
-                Войти
-              </Link>
-            )}
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-6xl w-full mx-auto px-4 py-8 space-y-6">
+      <main className="max-w-5xl w-full mx-auto px-4 pt-6 pb-24 md:pb-10 space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900">Курсы по математике</h1>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900">
+              📚 Все темы и классы
+            </h1>
             <p className="text-sm text-slate-500 mt-1">
-              Конспекты с формулами, презентации, интерактивные тренажёры и домашние задания по КТП.
+              Выбери класс, чтобы открыть конспекты, тренажёры и задания по любой теме.
             </p>
           </div>
           {isTeacher && (
             <button
+              type="button"
               onClick={() => setShowCreate((v) => !v)}
-              className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold shadow-sm transition"
+              className="btn-tactile px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-xs sm:text-sm font-bold shadow-xs"
             >
               {showCreate ? 'Закрыть форму' : '+ Добавить класс / курс'}
             </button>
@@ -146,7 +93,9 @@ export default function CourseListClient({ initialCourses, profile }: Props) {
                 className="w-full px-3 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-xl"
               >
                 {[5, 6, 7, 8, 9, 10, 11].map((g) => (
-                  <option key={g} value={g}>{g} класс</option>
+                  <option key={g} value={g}>
+                    {g} класс
+                  </option>
                 ))}
               </select>
             </div>
@@ -174,7 +123,7 @@ export default function CourseListClient({ initialCourses, profile }: Props) {
             <button
               type="submit"
               disabled={saving}
-              className="py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition"
+              className="btn-tactile py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-sm font-bold"
             >
               {saving ? 'Создаём...' : 'Создать курс'}
             </button>
@@ -193,21 +142,27 @@ export default function CourseListClient({ initialCourses, profile }: Props) {
                   <span className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-700 font-extrabold text-xl flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition">
                     {c.grade_number}
                   </span>
-                  <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">
-                    {c.total_hours} ч · {c.academic_year}
-                  </span>
+                  {isTeacher ? (
+                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">
+                      {c.total_hours} ч · {c.academic_year}
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700">
+                      {c.grade_number} класс
+                    </span>
+                  )}
                 </div>
                 <div>
                   <h2 className="text-lg font-extrabold text-slate-900 group-hover:text-indigo-700 transition">
                     {c.title}
                   </h2>
                   <p className="text-xs text-slate-500 mt-1">
-                    4 четверти · теория, материалы, симуляторы и домашние задания
+                    Конспекты, интерактивные тренажёры, домашние задания и ИИ-помощник
                   </p>
                 </div>
               </div>
               <div className="text-xs font-bold text-indigo-600 flex items-center gap-1">
-                Открыть программу →
+                Открыть все темы →
               </div>
             </Link>
           ))}
