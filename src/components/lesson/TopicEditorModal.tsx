@@ -17,6 +17,8 @@ const SIM_OPTIONS = [
   { value: 'fractions_visual', label: '🍕 Пицца дробей' },
   { value: 'angles', label: '📐 Транспортир' },
   { value: 'sets', label: '⭕ Диаграммы Эйлера–Венна' },
+  { value: 'percent_grid', label: '💯 Проценты (сетка 10×10)' },
+  { value: 'diagrams', label: '📊 Конструктор диаграмм' },
   { value: 'natural', label: '🎲 Генератор: Натуральные числа' },
   { value: 'arithmetic', label: '🎲 Генератор: Арифметика' },
   { value: 'expressions', label: '🎲 Генератор: Буквенные выражения' },

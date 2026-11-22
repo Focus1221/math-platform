@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import PercentGridSim from '@/components/simulators/PercentGridSim';
+import DiagramsSim from '@/components/simulators/DiagramsSim';
 import CoordRaySim from '@/components/simulators/CoordRaySim';
 import DivisibilitySim from '@/components/simulators/DivisibilitySim';
 import FractionsSim from '@/components/simulators/FractionsSim';
@@ -16,19 +18,33 @@ type SimId =
   | 'fractions_visual'
   | 'angles'
   | 'sets'
+  | 'percent_grid'
+  | 'diagrams'
   | 'generator';
 
+// 3. Добавь 2 кнопки в массив SIMULATORS:
 const SIMULATORS: { id: SimId; name: string; icon: string }[] = [
   { id: 'coord_ray', name: 'Координатный луч', icon: '📏' },
   { id: 'divisibility', name: 'Блиц: Делимость', icon: '⚡' },
   { id: 'fractions_visual', name: 'Пицца дробей', icon: '🍕' },
   { id: 'angles', name: 'Транспортир', icon: '📐' },
   { id: 'sets', name: 'Эйлер–Венн', icon: '⭕' },
+  { id: 'percent_grid', name: 'Проценты 10×10', icon: '💯' },
+  { id: 'diagrams', name: 'Диаграммы', icon: '📊' },
   { id: 'generator', name: 'Генератор задач', icon: '🎲' },
 ];
 
+// 4. Обнови resolveDefaultSim:
 function resolveDefaultSim(simType: string): SimId {
-  const direct: SimId[] = ['coord_ray', 'divisibility', 'fractions_visual', 'angles', 'sets'];
+  const direct: SimId[] = [
+    'coord_ray',
+    'divisibility',
+    'fractions_visual',
+    'angles',
+    'sets',
+    'percent_grid',
+    'diagrams',
+  ];
   return direct.includes(simType as SimId) ? (simType as SimId) : 'generator';
 }
 
@@ -175,6 +191,8 @@ export default function InteractiveTab({
         </div>
 
         <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 sm:p-6">
+          {activeSim === 'percent_grid' && <PercentGridSim onResult={handleSimResult} />}
+          {activeSim === 'diagrams' && <DiagramsSim onResult={handleSimResult} />}
           {activeSim === 'coord_ray' && <CoordRaySim onResult={handleSimResult} />}
           {activeSim === 'divisibility' && <DivisibilitySim onResult={handleSimResult} />}
           {activeSim === 'fractions_visual' && <FractionsSim onResult={handleSimResult} />}
