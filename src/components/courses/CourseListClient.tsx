@@ -80,12 +80,18 @@ export default function CourseListClient({ initialCourses, profile }: Props) {
             {profile ? (
               <>
                 {isTeacher && (
+                    <>
                   <Link
                     href="/teacher/submissions"
                     className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition"
                   >
                     📥 Проверка ДЗ
-                  </Link>
+                  </Link><Link
+                    href="/teacher/journal"
+                    className="px-2.5 sm:px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-bold whitespace-nowrap transition"
+                    >
+                    📊 Журнал
+                    </Link></>
                 )}
                 <span className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 text-xs font-semibold text-slate-700">
                   {isTeacher ? '🛠️ Учитель' : '🎓 Ученик'} · {profile.full_name}

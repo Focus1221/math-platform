@@ -201,7 +201,12 @@ export default function CourseWorkspace({
                 >
                   📥 Проверка ДЗ
                 </Link>
-
+                <Link
+                href="/teacher/journal"
+                className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-bold transition"
+                >
+                📊 Журнал
+                </Link>
                 <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 shrink-0">
                   <button
                     type="button"

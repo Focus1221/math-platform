@@ -9,6 +9,7 @@ export async function POST(request: Request) {
     const password = String(body.password || '');
     const role = body.role === 'teacher' ? 'teacher' : 'student';
     const inviteCode = String(body.inviteCode || '').trim();
+    const classCode = String(body.classCode || '').trim().toUpperCase();
 
     if (!fullName || !email || password.length < 6) {
       return NextResponse.json(
@@ -16,6 +17,9 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+
+    const admin = createAdminSupabase();
+    let classroomId: string | null = null;
 
     if (role === 'teacher') {
       const secret = process.env.TEACHER_INVITE_CODE;
@@ -31,9 +35,21 @@ export async function POST(request: Request) {
           { status: 403 }
         );
       }
-    }
+    } else if (classCode) {
+      const { data: cls } = await admin
+        .from('classrooms')
+        .select('id')
+        .eq('join_code', classCode)
+        .maybeSingle();
 
-    const admin = createAdminSupabase();
+      if (!cls) {
+        return NextResponse.json(
+          { error: `Класс с кодом «${classCode}» не найден. Проверьте код у учителя.` },
+          { status: 400 }
+        );
+      }
+      classroomId = cls.id;
+    }
 
     const { data, error } = await admin.auth.admin.createUser({
       email,
@@ -53,6 +69,7 @@ export async function POST(request: Request) {
       id: data.user.id,
       full_name: fullName,
       role,
+      classroom_id: classroomId,
     });
 
     if (profErr) {

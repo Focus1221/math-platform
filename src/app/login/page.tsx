@@ -14,6 +14,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
+  const [classCode, setClassCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'err' | 'ok'; text: string } | null>(null);
 
@@ -39,7 +40,7 @@ export default function LoginPage() {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fullName, email, password, role, inviteCode }),
+        body: JSON.stringify({ fullName, email, password, role, inviteCode, classCode }),
       });
       const data = await res.json();
 
@@ -167,6 +168,20 @@ export default function LoginPage() {
                   />
                 </div>
               )}
+              {role === 'student' && (
+  <div>
+    <label className="block text-xs font-bold text-slate-700 mb-1">
+      Код класса (выдаёт учитель, необязательно)
+    </label>
+    <input
+      type="text"
+      value={classCode}
+      onChange={(e) => setClassCode(e.target.value.toUpperCase())}
+      placeholder="Например: 5A-2026"
+      className="w-full px-3.5 py-2.5 text-sm uppercase bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
+    />
+  </div>
+)}
             </>
           )}
 
