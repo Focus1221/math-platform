@@ -6,14 +6,35 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin', 'cyrillic'] });
 
 export const metadata: Metadata = {
-  title: 'MathHub · Универсальная платформа по математике',
-  description: 'Интерактивное обучение математике для 5–11 классов',
+  title: 'MathHub — Интерактивная математика',
+  description:
+    'Интерактивная платформа по математике: наглядные уроки, тренажёры, ДЗ с автопроверкой и ИИ-помощник Сократ.',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+const THEME_INIT_SCRIPT = `
+(function(){
+  try {
+    var t = localStorage.getItem('mathhub_theme');
+    if (t === 'mint' || t === 'cosmos' || t === 'bright') {
+      document.documentElement.setAttribute('data-theme', t);
+    } else {
+      document.documentElement.setAttribute('data-theme', 'bright');
+    }
+  } catch (e) {}
+})();
+`;
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
-    <html lang="ru">
-      <body className={`${inter.className} bg-[#F6F7FB] text-slate-800 antialiased`}>
+    <html lang="ru" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+      </head>
+      <body className={`${inter.className} antialiased min-h-screen`}>
         {children}
       </body>
     </html>
