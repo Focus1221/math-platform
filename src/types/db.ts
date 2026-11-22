@@ -31,6 +31,7 @@ export interface Topic {
   hours: number;
   objectives: string[];
   theory_md: string;
+  slides?: LessonSlide[] | null;
   sim_type: string;
   badges: string[];
   is_assessment: boolean;
@@ -81,4 +82,73 @@ export interface ClassScheduleItem {
   lesson_date: string;
   hw_due_date: string | null;
   note: string;
+}
+export type SlideVisual =
+  | {
+      kind: 'formula_hero';
+      formula: string;
+      caption?: string;
+    }
+  | {
+      kind: 'fraction_bar';
+      numerator: number;
+      denominator: number;
+      label?: string;
+      compareNumerator?: number;
+      compareDenominator?: number;
+    }
+  | {
+      kind: 'number_line';
+      min: number;
+      max: number;
+      points: { value: number; label: string; highlight?: boolean }[];
+      jump?: { from: number; to: number; label?: string };
+    }
+  | {
+      kind: 'percent_grid';
+      percent: number;
+      label?: string;
+    }
+  | {
+      kind: 'angle';
+      degrees: number;
+      label?: string;
+    }
+  | {
+      kind: 'venn';
+      leftLabel: string;
+      rightLabel: string;
+      leftItems: string[];
+      rightItems: string[];
+      bothItems: string[];
+    }
+  | {
+      kind: 'compare';
+      leftTitle: string;
+      leftText: string;
+      rightTitle: string;
+      rightText: string;
+    };
+
+export type SlideType =
+  | 'intro'
+  | 'concept'
+  | 'example'
+  | 'trap'
+  | 'quiz'
+  | 'summary';
+
+export interface LessonSlide {
+  id: string;
+  type: SlideType;
+  title: string;
+  body_md: string;
+  visual?: SlideVisual | null;
+  steps?: string[];
+  wrong_md?: string;
+  right_md?: string;
+  quiz_options?: string[];
+  quiz_correct_index?: number;
+  quiz_explanation?: string;
+  takeaways?: string[];
 }

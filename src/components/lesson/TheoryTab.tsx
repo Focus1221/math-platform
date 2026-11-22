@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import MathMarkdown from './MathMarkdown';
 import type { Material, Topic } from '@/types/db';
-
+import LessonSlidesPlayer from './LessonSlidesPlayer';
+import SlideStudioPanel from './SlideStudioPanel';
 interface Props {
   topic: Topic;
   materials: Material[];
@@ -205,9 +206,20 @@ export default function TheoryTab({
             </div>
           </div>
         ) : (
-          <MathMarkdown content={topic.theory_md || ''} large={boardMode} />
-        )}
-      </div>
+        <div className="space-y-4">
+          <LessonSlidesPlayer
+            topic={topic}
+            boardMode={boardMode}
+            isTeacherView={canEdit}
+          />
+          {canEdit && (
+            <SlideStudioPanel
+              topic={topic}
+              onTopicUpdated={onTopicUpdated}
+            />
+          )}
+        </div>
+      )}
 
       {/* Правая колонка: Файлы и презентации */}
       {!hideEmptyMaterials && (
