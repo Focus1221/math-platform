@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import MathMarkdown from './MathMarkdown';
 import type { Material, Topic } from '@/types/db';
@@ -14,10 +14,26 @@ interface Props {
 }
 
 const KIND_META: Record<string, { label: string; icon: string; cls: string }> = {
-  presentation: { label: 'Презентация', icon: '📊', cls: 'bg-orange-50 text-orange-700 border-orange-200' },
-  pdf: { label: 'PDF / Документ', icon: '📄', cls: 'bg-rose-50 text-rose-700 border-rose-200' },
-  video: { label: 'Видеоурок', icon: '🎬', cls: 'bg-purple-50 text-purple-700 border-purple-200' },
-  link: { label: 'Ссылка', icon: '🔗', cls: 'bg-sky-50 text-sky-700 border-sky-200' },
+  presentation: {
+    label: 'Презентация',
+    icon: '📊',
+    cls: 'bg-orange-50 text-orange-700 border-orange-200',
+  },
+  pdf: {
+    label: 'PDF / Документ',
+    icon: '📄',
+    cls: 'bg-rose-50 text-rose-700 border-rose-200',
+  },
+  video: {
+    label: 'Видеоурок',
+    icon: '🎬',
+    cls: 'bg-purple-50 text-purple-700 border-purple-200',
+  },
+  link: {
+    label: 'Ссылка',
+    icon: '🔗',
+    cls: 'bg-sky-50 text-sky-700 border-sky-200',
+  },
 };
 
 export default function TheoryTab({
@@ -28,16 +44,25 @@ export default function TheoryTab({
   onMaterialsChanged,
 }: Props) {
   const supabase = createClient();
+
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(topic.theory_md);
+  const [draft, setDraft] = useState(topic.theory_md || '');
   const [savingTheory, setSavingTheory] = useState(false);
 
-  const [kind, setKind] = useState<'presentation' | 'pdf' | 'video' | 'link'>('presentation');
+  const [kind, setKind] = useState<'presentation' | 'pdf' | 'video' | 'link'>(
+    'presentation'
+  );
   const [title, setTitle] = useState('');
   const [url, setUrl] = useState('');
   const [desc, setDesc] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+
+  // Синхронизируем черновик при переключении на другую тему
+  useEffect(() => {
+    setDraft(topic.theory_md || '');
+    setEditing(false);
+  }, [topic.id, topic.theory_md]);
 
   const visibleMaterials = materials.filter((m) => m.kind !== 'iframe_game');
 
@@ -54,7 +79,7 @@ export default function TheoryTab({
       onTopicUpdated(data as Topic);
       setEditing(false);
     } else if (error) {
-      alert('Ошибка сохранения: ' + error.message);
+      alert('Ошибка сохранения конспекта: ' + error.message);
     }
     setSavingTheory(false);
   }
@@ -80,9 +105,12 @@ export default function TheoryTab({
         setUploading(false);
         return;
       }
+
       storagePath = safePath;
       fileName = file.name;
-      const { data: pub } = supabase.storage.from('lesson-materials').getPublicUrl(safePath);
+      const { data: pub } = supabase.storage
+        .from('lesson-materials')
+        .getPublicUrl(safePath);
       finalUrl = pub.publicUrl;
     }
 
@@ -127,12 +155,14 @@ export default function TheoryTab({
       {/* Левая колонка: Конспект */}
       <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h3 className="text-base sm:text-lg font-bold text-slate-900">📘 Конспект урока</h3>
+          <h3 className="text-base sm:text-lg font-bold text-slate-900">
+            📘 Конспект урока
+          </h3>
           {canEdit && (
             <button
               type="button"
               onClick={() => {
-                setDraft(topic.theory_md);
+                setDraft(topic.theory_md || '');
                 setEditing((v) => !v);
               }}
               className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition"
@@ -145,7 +175,8 @@ export default function TheoryTab({
         {canEdit && editing ? (
           <div className="space-y-3">
             <p className="text-xs text-slate-500">
-              Поддерживается Markdown и формулы LaTeX: <code>$\frac&#123;3&#125;&#123;4&#125; + \sqrt&#123;x&#125;$</code>.
+              Поддерживается Markdown и формулы LaTeX, например{' '}
+              <code>{'$\\frac{3}{4} + \\sqrt{x}$'}</code>.
             </p>
             <textarea
               rows={14}
@@ -158,21 +189,23 @@ export default function TheoryTab({
                 type="button"
                 disabled={savingTheory}
                 onClick={saveTheory}
-                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold transition"
+                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
               >
                 {savingTheory ? 'Сохранение...' : '💾 Сохранить конспект'}
               </button>
             </div>
           </div>
         ) : (
-          <MathMarkdown content={topic.theory_md} />
+          <MathMarkdown content={topic.theory_md || ''} />
         )}
       </div>
 
       {/* Правая колонка: Файлы и презентации */}
       <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 space-y-4 h-fit">
         <div className="flex items-center justify-between">
-          <h3 className="text-base font-bold text-slate-900">📎 Материалы к уроку</h3>
+          <h3 className="text-base font-bold text-slate-900">
+            📎 Материалы к уроку
+          </h3>
           <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
             {visibleMaterials.length}
           </span>
@@ -187,9 +220,14 @@ export default function TheoryTab({
             {visibleMaterials.map((m) => {
               const meta = KIND_META[m.kind] || KIND_META.link;
               return (
-                <div key={m.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
+                <div
+                  key={m.id}
+                  className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2"
+                >
                   <div className="flex items-start justify-between gap-2">
-                    <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${meta.cls}`}>
+                    <span
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${meta.cls}`}
+                    >
                       {meta.icon} {meta.label}
                     </span>
                     {canEdit && (
@@ -197,13 +235,16 @@ export default function TheoryTab({
                         type="button"
                         onClick={() => handleDeleteMaterial(m)}
                         className="text-xs font-bold text-slate-400 hover:text-rose-600"
+                        title="Удалить материал"
                       >
                         ✕
                       </button>
                     )}
                   </div>
                   <div className="text-sm font-bold text-slate-900">{m.title}</div>
-                  {m.description && <p className="text-xs text-slate-500">{m.description}</p>}
+                  {m.description && (
+                    <p className="text-xs text-slate-500">{m.description}</p>
+                  )}
                   {m.url && (
                     <a
                       href={m.url}
@@ -211,7 +252,9 @@ export default function TheoryTab({
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-semibold transition"
                     >
-                      {m.file_name ? `⬇ Скачать (${m.file_name})` : '↗ Открыть материал'}
+                      {m.file_name
+                        ? `⬇ Скачать (${m.file_name})`
+                        : '↗ Открыть материал'}
                     </a>
                   )}
                 </div>
@@ -221,8 +264,13 @@ export default function TheoryTab({
         )}
 
         {canEdit && (
-          <form onSubmit={handleAddMaterial} className="pt-4 border-t border-slate-100 space-y-2.5">
-            <div className="text-xs font-bold text-indigo-700 uppercase">+ Загрузить материал</div>
+          <form
+            onSubmit={handleAddMaterial}
+            className="pt-4 border-t border-slate-100 space-y-2.5"
+          >
+            <div className="text-xs font-bold text-indigo-700 uppercase">
+              + Загрузить материал
+            </div>
             <select
               value={kind}
               onChange={(e) => setKind(e.target.value as typeof kind)}

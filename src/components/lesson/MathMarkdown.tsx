@@ -17,12 +17,19 @@ export default function MathMarkdown({ content }: { content: string }) {
               <span>{children}</span>
             </h3>
           ),
-          ul: ({ children }) => <ul className="list-disc pl-5 space-y-1.5 my-2">{children}</ul>,
-          ol: ({ children }) => <ol className="list-decimal pl-5 space-y-1.5 my-2">{children}</ol>,
-          strong: ({ children }) => <strong className="font-bold text-slate-900">{children}</strong>,
+          ul: ({ children }) => (
+            <ul className="list-disc pl-5 space-y-1.5 my-2">{children}</ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="list-decimal pl-5 space-y-1.5 my-2">{children}</ol>
+          ),
+          strong: ({ children }) => (
+            <strong className="font-bold text-slate-900">{children}</strong>
+          ),
+          p: ({ children }) => <p className="my-2">{children}</p>,
         }}
       >
-        {content || '*Конспект пока не заполнен.*'}
+        {content?.trim() ? content : '*Конспект пока не заполнен.*'}
       </ReactMarkdown>
     </div>
   );

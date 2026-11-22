@@ -1,12 +1,12 @@
-
 'use client';
-import AiTutorTab from './AiTutorTab';
+
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
-import HomeworkTab from './HomeworkTab';
-import InteractiveTab from './InteractiveTab';
 import TheoryTab from './TheoryTab';
+import InteractiveTab from './InteractiveTab';
+import HomeworkTab from './HomeworkTab';
+import AiTutorTab from './AiTutorTab';
 import type { Course, Material, Profile, Topic } from '@/types/db';
 
 interface Props {
@@ -29,19 +29,20 @@ export default function CourseWorkspace({
 
   const [topics, setTopics] = useState<Topic[]>(initialTopics);
   const [teacherMode, setTeacherMode] = useState(false);
-  const [activeQuarter, setActiveQuarter] = useState<number>(initialTopics[0]?.quarter || 1);
-  const [activeTopicId, setActiveTopicId] = useState<string>(initialTopics[0]?.id || '');
+  const [activeQuarter, setActiveQuarter] = useState<number>(
+    initialTopics[0]?.quarter || 1
+  );
+  const [activeTopicId, setActiveTopicId] = useState<string>(
+    initialTopics[0]?.id || ''
+  );
   const [activeTab, setActiveTab] = useState<TabId>('theory');
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'assessment' | 'completed'>('all');
   const [completedIds, setCompletedIds] = useState<string[]>(initialCompletedIds);
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Материалы и заметки для текущей темы
   const [materials, setMaterials] = useState<Material[]>([]);
   const [notesDraft, setNotesDraft] = useState('');
-
-  // Быстрое добавление новой темы (для новых классов 6-11)
   const [newTopicTitle, setNewTopicTitle] = useState('');
   const [newTopicSection, setNewTopicSection] = useState('');
 
@@ -76,7 +77,8 @@ export default function CourseWorkspace({
       if (filter === 'assessment' && !t.is_assessment) return false;
       if (filter === 'completed' && !completedIds.includes(t.id)) return false;
       if (q) {
-        const hay = `${t.title} ${t.section} ${t.objectives.join(' ')}`.toLowerCase();
+        const objs = Array.isArray(t.objectives) ? t.objectives.join(' ') : '';
+        const hay = `${t.title} ${t.section} ${objs}`.toLowerCase();
         return hay.includes(q);
       }
       return true;
@@ -113,7 +115,9 @@ export default function CourseWorkspace({
   async function handleAddTopic(e: React.FormEvent) {
     e.preventDefault();
     if (!newTopicTitle.trim()) return;
-    const nextOrder = topics.length ? Math.max(...topics.map((t) => t.order_index)) + 1 : 1;
+    const nextOrder = topics.length
+      ? Math.max(...topics.map((t) => t.order_index)) + 1
+      : 1;
     const { data, error } = await supabase
       .from('topics')
       .insert({
@@ -135,7 +139,6 @@ export default function CourseWorkspace({
     }
   }
 
- 
   async function saveTeacherNotes() {
     if (!activeTopic) return;
     const { data } = await supabase
@@ -145,11 +148,16 @@ export default function CourseWorkspace({
       .select()
       .single();
     if (data) {
-      setTopics((prev) => prev.map((t) => (t.id === activeTopic.id ? (data as Topic) : t)));
+      setTopics((prev) =>
+        prev.map((t) => (t.id === activeTopic.id ? (data as Topic) : t))
+      );
       alert('Заметки сохранены!');
     }
   }
 
+  const activeObjectives = Array.isArray(activeTopic?.objectives)
+    ? activeTopic.objectives
+    : [];
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -160,7 +168,7 @@ export default function CourseWorkspace({
             <button
               type="button"
               onClick={() => setMobileOpen((v) => !v)}
-              className="lg:hidden p-2 rounded-xl text-slate-600 hover:bg-slate-100"
+              className="lg:hidden p-2 rounded-xl text-slate-600 hover:bg-slate-100 shrink-0"
             >
               ☰
             </button>
@@ -176,27 +184,32 @@ export default function CourseWorkspace({
                 {course.title}
               </h1>
               <p className="text-[11px] text-slate-500 truncate">
-                <Link href="/courses" className="text-indigo-600 hover:underline">← Все классы</Link> · {course.academic_year} · {course.total_hours} ч
+                <Link href="/courses" className="text-indigo-600 hover:underline">
+                  ← Все классы
+                </Link>{' '}
+                · {course.academic_year} · {course.total_hours} ч
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {isTeacher && (
               <>
                 <Link
                   href="/teacher/submissions"
-                  className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition"
+                  className="px-2.5 sm:px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold whitespace-nowrap transition"
                 >
                   📥 Проверка ДЗ
                 </Link>
 
-                <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200">
+                <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 shrink-0">
                   <button
                     type="button"
                     onClick={() => setTeacherMode(false)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                      !teacherMode ? 'bg-white text-indigo-700 shadow-xs' : 'text-slate-600'
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                      !teacherMode
+                        ? 'bg-white text-indigo-700 shadow-xs'
+                        : 'text-slate-600'
                     }`}
                   >
                     🎓 Ученик
@@ -204,8 +217,10 @@ export default function CourseWorkspace({
                   <button
                     type="button"
                     onClick={() => setTeacherMode(true)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                      teacherMode ? 'bg-indigo-600 text-white shadow-xs' : 'text-slate-600'
+                    className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                      teacherMode
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-600'
                     }`}
                   >
                     🛠️ Редактор
@@ -217,7 +232,7 @@ export default function CourseWorkspace({
             {!profile && (
               <Link
                 href="/login"
-                className="px-3.5 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold"
+                className="px-3.5 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold whitespace-nowrap"
               >
                 Войти
               </Link>
@@ -236,7 +251,7 @@ export default function CourseWorkspace({
 
         {/* Сайдбар КТП */}
         <aside
-          className={`fixed lg:sticky top-16 left-0 z-30 h-[calc(100vh-4rem)] w-[320px] bg-white border-r border-slate-200 flex flex-col transition-transform duration-200 shrink-0 ${
+          className={`fixed lg:sticky top-16 left-0 z-30 h-[calc(100vh-4rem)] w-[300px] sm:w-[320px] bg-white border-r border-slate-200 flex flex-col transition-transform duration-200 shrink-0 ${
             mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
           }`}
         >
@@ -244,7 +259,9 @@ export default function CourseWorkspace({
             <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100 space-y-1.5">
               <div className="flex justify-between text-xs font-semibold">
                 <span className="text-slate-600">Прогресс курса</span>
-                <span className="text-emerald-600 font-bold">{progressPercent}%</span>
+                <span className="text-emerald-600 font-bold">
+                  {progressPercent}%
+                </span>
               </div>
               <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
                 <div
@@ -295,7 +312,9 @@ export default function CourseWorkspace({
                   type="button"
                   onClick={() => setFilter(id)}
                   className={`flex-1 py-1.5 text-[11px] font-semibold rounded-lg transition ${
-                    filter === id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                    filter === id
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-slate-100 text-slate-600'
                   }`}
                 >
                   {label}
@@ -309,7 +328,9 @@ export default function CourseWorkspace({
               <details key={section} open className="group">
                 <summary className="cursor-pointer list-none px-2.5 py-2 rounded-xl bg-slate-50 text-xs font-bold text-slate-800 flex justify-between">
                   <span className="truncate">{section}</span>
-                  <span className="text-[10px] text-slate-500 ml-2">{secTopics.length}</span>
+                  <span className="text-[10px] text-slate-500 ml-2">
+                    {secTopics.length}
+                  </span>
                 </summary>
                 <div className="mt-1.5 space-y-1 pl-1">
                   {secTopics.map((t) => {
@@ -345,7 +366,8 @@ export default function CourseWorkspace({
                             {t.title}
                           </div>
                           <div className="text-[10px] text-slate-400 mt-0.5">
-                            {t.dates} · {t.hours} ч {t.is_assessment ? '· СОР/СОЧ' : ''}
+                            {t.dates} · {t.hours} ч{' '}
+                            {t.is_assessment ? '· СОР/СОЧ' : ''}
                           </div>
                         </div>
                       </button>
@@ -356,8 +378,13 @@ export default function CourseWorkspace({
             ))}
 
             {teacherMode && (
-              <form onSubmit={handleAddTopic} className="p-3 rounded-2xl bg-indigo-50 border border-indigo-200 space-y-2">
-                <div className="text-[11px] font-bold text-indigo-800">+ Новая тема ({activeQuarter} ч.)</div>
+              <form
+                onSubmit={handleAddTopic}
+                className="p-3 rounded-2xl bg-indigo-50 border border-indigo-200 space-y-2"
+              >
+                <div className="text-[11px] font-bold text-indigo-800">
+                  + Новая тема ({activeQuarter} ч.)
+                </div>
                 <input
                   type="text"
                   value={newTopicSection}
@@ -404,9 +431,13 @@ export default function CourseWorkspace({
                       <span className="px-2.5 py-1 rounded-full bg-slate-100 font-semibold text-slate-700">
                         {activeTopic.quarter} четверть
                       </span>
-                      <span className="font-semibold text-indigo-600">{activeTopic.section}</span>
+                      <span className="font-semibold text-indigo-600">
+                        {activeTopic.section}
+                      </span>
                       {activeTopic.dates && (
-                        <span className="text-slate-500">📅 {activeTopic.dates} ({activeTopic.hours} ч.)</span>
+                        <span className="text-slate-500">
+                          📅 {activeTopic.dates} ({activeTopic.hours} ч.)
+                        </span>
                       )}
                       {activeTopic.is_assessment && (
                         <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold">
@@ -428,7 +459,9 @@ export default function CourseWorkspace({
                         : 'bg-slate-900 hover:bg-indigo-600 text-white'
                     }`}
                   >
-                    {completedIds.includes(activeTopic.id) ? '✓ Тема пройдена' : '○ Отметить пройденной'}
+                    {completedIds.includes(activeTopic.id)
+                      ? '✓ Тема пройдена'
+                      : '○ Отметить пройденной'}
                   </button>
                 </div>
 
@@ -468,46 +501,59 @@ export default function CourseWorkspace({
               </nav>
 
               {/* Содержимое вкладок */}
-              {activeTab === 'ai' && (
-  <AiTutorTab
-    topic={activeTopic}
-    profile={profile}
-    onGoToTheory={() => setActiveTab('theory')}
-  />
-)}
+              {activeTab === 'theory' && (
+                <TheoryTab
+                  topic={activeTopic}
+                  materials={materials}
+                  canEdit={teacherMode}
+                  onTopicUpdated={(upd) =>
+                    setTopics((prev) =>
+                      prev.map((t) => (t.id === upd.id ? upd : t))
+                    )
+                  }
+                  onMaterialsChanged={setMaterials}
+                />
+              )}
 
               {activeTab === 'interactive' && (
-  <InteractiveTab
-    topic={activeTopic}
-    materials={materials}
-    canEdit={teacherMode}
-    profile={profile}
-    isTopicCompleted={completedIds.includes(activeTopic.id)}
-    onMaterialsChanged={setMaterials}
-  />
-)}
+                <InteractiveTab
+                  topic={activeTopic}
+                  materials={materials}
+                  canEdit={teacherMode}
+                  profile={profile}
+                  isTopicCompleted={completedIds.includes(activeTopic.id)}
+                  onMaterialsChanged={setMaterials}
+                />
+              )}
 
               {activeTab === 'homework' && (
-  <HomeworkTab
-    topic={activeTopic}
-    canEdit={teacherMode}
-    profile={profile}
-  />
-)}
+                <HomeworkTab
+                  topic={activeTopic}
+                  canEdit={teacherMode}
+                  profile={profile}
+                />
+              )}
 
               {activeTab === 'ai' && (
-                <div className="bg-white rounded-3xl border border-slate-200 p-8 text-center text-sm text-slate-500">
-                  ИИ-тьютор «Сократ» (с блокировкой на СОР/СОЧ на стороне сервера) подключим на Шаге 5.
-                </div>
+                <AiTutorTab
+                  topic={activeTopic}
+                  profile={profile}
+                  onGoToTheory={() => setActiveTab('theory')}
+                />
               )}
 
               {activeTab === 'passport' && (
                 <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-5">
                   <div>
-                    <h3 className="text-base font-bold text-slate-900">Цели обучения (ЦО)</h3>
+                    <h3 className="text-base font-bold text-slate-900">
+                      Цели обучения (ЦО)
+                    </h3>
                     <ul className="mt-2 space-y-1.5">
-                      {activeTopic.objectives.map((o, i) => (
-                        <li key={i} className="text-xs sm:text-sm text-slate-700 p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+                      {activeObjectives.map((o, i) => (
+                        <li
+                          key={i}
+                          className="text-xs sm:text-sm text-slate-700 p-2.5 rounded-xl bg-slate-50 border border-slate-200"
+                        >
                           🎯 {o}
                         </li>
                       ))}
@@ -515,7 +561,9 @@ export default function CourseWorkspace({
                   </div>
 
                   <div className="space-y-2 pt-3 border-t border-slate-100">
-                    <h4 className="text-xs font-bold uppercase text-slate-500">Методические заметки учителя</h4>
+                    <h4 className="text-xs font-bold uppercase text-slate-500">
+                      Методические заметки учителя
+                    </h4>
                     {teacherMode ? (
                       <>
                         <textarea
