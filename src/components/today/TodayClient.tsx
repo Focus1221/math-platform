@@ -112,15 +112,18 @@ export default function TodayClient({
     [filteredSchedules, tomorrowIso]
   );
 
-  // Актуальные ДЗ: есть задания, дата сдачи не старее 7 дней и ещё не все задания закрыты
   const activeHomework = useMemo(() => {
     return filteredSchedules
       .filter((s) => s.totalTasks > 0 && (s.hwDueDate || s.lessonDate >= todayIso))
-      .sort((a, b) => (a.hwDueDate || a.lessonDate).localeCompare(b.hwDueDate || b.lessonDate));
+      .sort((a, b) =>
+        (a.hwDueDate || a.lessonDate).localeCompare(b.hwDueDate || b.lessonDate)
+      );
   }, [filteredSchedules, todayIso]);
 
   function getDueBadge(dueDate: string | null) {
-    if (!dueDate) return { label: 'Домашнее задание', cls: 'bg-amber-100 text-amber-800' };
+    if (!dueDate) {
+      return { label: 'Домашнее задание', cls: 'bg-amber-100 text-amber-800' };
+    }
     if (dueDate < todayIso) {
       return {
         label: `Просрочено (${formatShortRuDate(dueDate)})`,
@@ -143,7 +146,7 @@ export default function TodayClient({
     <div className="min-h-screen flex flex-col">
       <AppNav profile={profile} />
 
-      <main className="max-w-5xl w-full mx-auto px-4 pt-6 pb-24 md:pb-10 space-y-6">
+      <main className="max-w-5xl w-full mx-auto px-4 pt-6 pb-28 md:pb-10 space-y-6">
         {/* Приветствие и живая статистика */}
         <section className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="space-y-1">
@@ -153,12 +156,12 @@ export default function TodayClient({
               </h1>
               {studentClassroom && (
                 <span className="px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-800 text-xs font-extrabold">
-                  🏫 {studentClassroom.name}
+                  {studentClassroom.name}
                 </span>
               )}
               {isTeacher && (
                 <span className="px-2.5 py-1 rounded-full bg-slate-900 text-white text-xs font-bold">
-                  🛠️ Учитель
+                  👨‍🏫 Учитель
                 </span>
               )}
             </div>
@@ -169,7 +172,6 @@ export default function TodayClient({
             </p>
           </div>
 
-          {/* Счётчики ученика или выбор класса у учителя */}
           {isTeacher ? (
             teacherClassrooms.length > 0 && (
               <div className="flex items-center gap-2 bg-white px-3.5 py-2 rounded-2xl border border-slate-200 shadow-xs shrink-0">
@@ -226,12 +228,12 @@ export default function TodayClient({
               href="/login"
               className="btn-tactile px-5 py-3 rounded-2xl bg-white text-indigo-700 border-indigo-200 text-sm font-extrabold text-center shrink-0"
             >
-              Войти или зарегистрироваться →
+              Войти или зарегистрироваться
             </Link>
           </div>
         )}
 
-        {/* 🟢 ГЛАВНЫЙ ФОКУС: УРОК СЕГОДНЯ */}
+        {/* ГЛАВНЫЙ ФОКУС: УРОК СЕГОДНЯ */}
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-extrabold uppercase tracking-wider text-emerald-700 flex items-center gap-2">
@@ -307,6 +309,7 @@ export default function TodayClient({
 
                     <Link
                       href={`/courses/${lesson.courseSlug}?topic=${lesson.topicId}`}
+                      prefetch={false}
                       className="btn-tactile px-5 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 text-white text-sm font-extrabold shadow-xs"
                     >
                       Открыть урок →
@@ -332,16 +335,17 @@ export default function TodayClient({
               {defaultCourse && (
                 <Link
                   href={`/courses/${defaultCourse.slug}`}
+                  prefetch={false}
                   className="btn-tactile px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-xs sm:text-sm font-extrabold text-center shrink-0"
                 >
-                  Открыть {defaultCourse.title} →
+                  Открыть {defaultCourse.title}
                 </Link>
               )}
             </div>
           )}
         </section>
 
-        {/* 🟠 ДОМАШНИЕ ЗАДАНИЯ И ОЦЕНКИ */}
+        {/* ДОМАШНИЕ ЗАДАНИЯ И ОЦЕНКИ */}
         {(activeHomework.length > 0 || recentGraded.length > 0) && (
           <section className="space-y-3">
             <h2 className="text-sm font-extrabold uppercase tracking-wider text-amber-700 flex items-center gap-2">
@@ -388,6 +392,7 @@ export default function TodayClient({
                       </span>
                       <Link
                         href={`/courses/${hw.courseSlug}?topic=${hw.topicId}&tab=homework`}
+                        prefetch={false}
                         className={`btn-tactile px-4 py-2 rounded-xl text-xs font-extrabold ${
                           allDone
                             ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700'
@@ -405,6 +410,7 @@ export default function TodayClient({
                 <Link
                   key={g.id}
                   href={`/courses/${g.courseSlug}?topic=${g.topicId}&tab=homework`}
+                  prefetch={false}
                   className="rounded-3xl bg-white border border-emerald-200 hover:border-emerald-400 p-5 flex flex-col justify-between gap-3 transition"
                 >
                   <div className="space-y-1.5">
@@ -421,7 +427,7 @@ export default function TodayClient({
                     </div>
                     {g.teacherComment && (
                       <p className="text-xs text-slate-600 bg-emerald-50/70 px-3 py-2 rounded-xl">
-                        💬 «{g.teacherComment}»
+                        «{g.teacherComment}»
                       </p>
                     )}
                   </div>
@@ -434,7 +440,7 @@ export default function TodayClient({
           </section>
         )}
 
-        {/* 🔵 НА ЗАВТРА И БЛИЖАЙШИЕ УРОКИ */}
+        {/* НА ЗАВТРА И БЛИЖАЙШИЕ УРОКИ */}
         {(tomorrowLessons.length > 0 || upcomingLessons.length > 0) && (
           <section className="space-y-3">
             <h2 className="text-sm font-extrabold uppercase tracking-wider text-sky-700 flex items-center gap-2">
@@ -447,6 +453,7 @@ export default function TodayClient({
                 <Link
                   key={lesson.id}
                   href={`/courses/${lesson.courseSlug}?topic=${lesson.topicId}`}
+                  prefetch={false}
                   className="group bg-sky-50/60 hover:bg-sky-50 rounded-3xl border-2 border-sky-200 hover:border-sky-400 p-5 flex flex-col justify-between gap-3 transition"
                 >
                   <div className="space-y-1.5">
@@ -477,6 +484,7 @@ export default function TodayClient({
                 <Link
                   key={lesson.id}
                   href={`/courses/${lesson.courseSlug}?topic=${lesson.topicId}`}
+                  prefetch={false}
                   className="group bg-white rounded-3xl border border-slate-200 hover:border-sky-300 p-5 flex flex-col justify-between gap-3 transition"
                 >
                   <div className="space-y-1.5">
@@ -499,11 +507,11 @@ export default function TodayClient({
           </section>
         )}
 
-        {/* 🎮 БЫСТРЫЙ ВХОД В ТРЕНАЖЁРЫ */}
+        {/* БЫСТРЫЙ ВХОД В ТРЕНАЖЁРЫ */}
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-extrabold uppercase tracking-wider text-slate-500">
-              🎮 Потренироваться прямо сейчас
+              Потренироваться прямо сейчас
             </h2>
             <Link
               href="/simulators"

@@ -65,55 +65,59 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
 
     async function load() {
       setLoading(true);
-      const { data: taskRows } = await supabase
-        .from('homework_tasks')
-        .select('*')
-        .eq('topic_id', topic.id)
-        .order('order_index', { ascending: true });
-
-      const loadedTasks = (taskRows as HomeworkTask[]) || [];
-      if (cancelled) return;
-      setTasks(loadedTasks);
-      setHints({});
-
-      if (profile && loadedTasks.length > 0) {
-        const { data: subRows } = await supabase
-          .from('submissions')
+      try {
+        const { data: taskRows } = await supabase
+          .from('homework_tasks')
           .select('*')
-          .eq('student_id', profile.id)
-          .in(
-            'task_id',
-            loadedTasks.map((t) => t.id)
-          );
+          .eq('topic_id', topic.id)
+          .order('order_index', { ascending: true });
 
+        const loadedTasks = (taskRows as HomeworkTask[]) || [];
         if (cancelled) return;
-        const subMap: Record<string, Submission> = {};
-        const drafts: Record<string, string> = {};
-        const signedMap: Record<string, string> = {};
+        setTasks(loadedTasks);
+        setHints({});
 
-        for (const sub of (subRows as Submission[]) || []) {
-          subMap[sub.task_id] = sub;
-          drafts[sub.task_id] = sub.answer_text || '';
-          if (sub.photo_path) {
-            const { data: signed } = await supabase.storage
-              .from('student-submissions')
-              .createSignedUrl(sub.photo_path, 3600);
-            if (signed?.signedUrl) signedMap[sub.task_id] = signed.signedUrl;
+        if (profile && loadedTasks.length > 0) {
+          const { data: subRows } = await supabase
+            .from('submissions')
+            .select('*')
+            .eq('student_id', profile.id)
+            .in(
+              'task_id',
+              loadedTasks.map((t) => t.id)
+            );
+
+          if (cancelled) return;
+          const subMap: Record<string, Submission> = {};
+          const drafts: Record<string, string> = {};
+          const signedMap: Record<string, string> = {};
+
+          for (const sub of (subRows as Submission[]) || []) {
+            subMap[sub.task_id] = sub;
+            drafts[sub.task_id] = sub.answer_text || '';
+            if (sub.photo_path) {
+              const { data: signed } = await supabase.storage
+                .from('student-submissions')
+                .createSignedUrl(sub.photo_path, 3600);
+              if (signed?.signedUrl) signedMap[sub.task_id] = signed.signedUrl;
+            }
           }
-        }
 
-        if (!cancelled) {
-          setSubmissions(subMap);
-          setDraftAnswers(drafts);
-          setPhotoUrls(signedMap);
+          if (!cancelled) {
+            setSubmissions(subMap);
+            setDraftAnswers(drafts);
+            setPhotoUrls(signedMap);
+          }
+        } else {
+          setSubmissions({});
+          setDraftAnswers({});
+          setPhotoUrls({});
         }
-      } else {
-        setSubmissions({});
-        setDraftAnswers({});
-        setPhotoUrls({});
+      } catch (err) {
+        console.error('Homework load error:', err);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-
-      if (!cancelled) setLoading(false);
     }
 
     load();

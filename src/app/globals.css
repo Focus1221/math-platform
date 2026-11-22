@@ -14,15 +14,14 @@ body {
   color: #1E293B;
 }
 
-/* Тактильная кнопка с мягким «нажатием» */
+/* Тактильная кнопка без скачка высоты на смартфонах */
 .btn-tactile {
   border-bottom-width: 3px;
-  transition: transform 0.1s ease, border-bottom-width 0.1s ease, background-color 0.15s ease;
+  transition: transform 0.1s ease, background-color 0.15s ease;
 }
 
 .btn-tactile:active:not(:disabled) {
   transform: translateY(2px);
-  border-bottom-width: 1px;
 }
 
 @keyframes shake-soft {

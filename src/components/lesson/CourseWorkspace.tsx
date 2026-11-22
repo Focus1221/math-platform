@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import TheoryTab from './TheoryTab';
@@ -60,7 +60,9 @@ export default function CourseWorkspace({
   const [soundOn, setSoundOn] = useState(true);
 
   const initialMatchedTopic =
-    initialTopics.find((t) => t.id === initialTopicId) || initialTopics[0] || null;
+    initialTopics.find((t) => t.id === initialTopicId) ||
+    initialTopics[0] ||
+    null;
 
   const [activeQuarter, setActiveQuarter] = useState<number>(
     initialMatchedTopic?.quarter || 1
@@ -69,7 +71,9 @@ export default function CourseWorkspace({
     initialMatchedTopic?.id || ''
   );
   const [activeTab, setActiveTab] = useState<TabId>(() => {
-    if (initialTab === 'interactive' || initialTab === 'homework') return initialTab;
+    if (initialTab === 'interactive' || initialTab === 'homework') {
+      return initialTab;
+    }
     return 'theory';
   });
 
@@ -79,14 +83,41 @@ export default function CourseWorkspace({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [editingTopicModal, setEditingTopicModal] = useState(false);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+
   const [materials, setMaterials] = useState<Material[]>([]);
   const [notesDraft, setNotesDraft] = useState('');
   const [newTopicTitle, setNewTopicTitle] = useState('');
   const [newTopicSection, setNewTopicSection] = useState('');
 
+  const tabsNavRef = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
     setSoundOn(isSoundEnabled());
   }, []);
+
+  // Синхронизация темы и вкладки при переходе с экрана «Сегодня» + автопрокрутка к ДЗ на смартфоне
+  useEffect(() => {
+    if (initialTopicId) {
+      const matched = initialTopics.find((t) => t.id === initialTopicId);
+      if (matched) {
+        setActiveTopicId(matched.id);
+        setActiveQuarter(matched.quarter);
+      }
+    }
+    if (
+      initialTab === 'interactive' ||
+      initialTab === 'homework' ||
+      initialTab === 'theory'
+    ) {
+      setActiveTab(initialTab);
+      if (initialTab !== 'theory') {
+        const timer = setTimeout(() => {
+          tabsNavRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 180);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [initialTopicId, initialTab, initialTopics]);
 
   function toggleSound() {
     const next = !soundOn;
@@ -101,7 +132,10 @@ export default function CourseWorkspace({
   );
 
   const activeTopic = useMemo(
-    () => orderedTopics.find((t) => t.id === activeTopicId) || orderedTopics[0] || null,
+    () =>
+      orderedTopics.find((t) => t.id === activeTopicId) ||
+      orderedTopics[0] ||
+      null,
     [orderedTopics, activeTopicId]
   );
 
@@ -187,6 +221,7 @@ export default function CourseWorkspace({
       }
       return true;
     });
+
     const map = new Map<string, Topic[]>();
     list.forEach((t) => {
       const secName = teacherMode ? t.section : cleanSectionName(t.section);
@@ -224,13 +259,15 @@ export default function CourseWorkspace({
     const nextOrder = topics.length
       ? Math.max(...topics.map((t) => t.order_index)) + 1
       : 1;
+
     const { data, error } = await supabase
       .from('topics')
       .insert({
         course_id: course.id,
         order_index: nextOrder,
         quarter: activeQuarter,
-        section: newTopicSection.trim() || `Раздел ${activeQuarter} четверти`,
+        section:
+          newTopicSection.trim() || `Раздел ${activeQuarter} четверти`,
         title: newTopicTitle.trim(),
         theory_md: `### ${newTopicTitle.trim()}\nДобавьте конспект урока в режиме учителя.`,
       })
@@ -253,6 +290,7 @@ export default function CourseWorkspace({
       .eq('id', activeTopic.id)
       .select()
       .single();
+
     if (data) {
       setTopics((prev) =>
         prev.map((t) => (t.id === activeTopic.id ? (data as Topic) : t))
@@ -264,19 +302,21 @@ export default function CourseWorkspace({
   const activeObjectives = Array.isArray(activeTopic?.objectives)
     ? activeTopic.objectives
     : [];
-  const activeScheduleBadge = activeTopic ? topicBadgeMap.get(activeTopic.id) : undefined;
+  const activeScheduleBadge = activeTopic
+    ? topicBadgeMap.get(activeTopic.id)
+    : undefined;
 
-  const tabs: { id: TabId; label: string }[] = teacherMode
+  const tabs: { id: TabId; label: string; shortLabel: string }[] = teacherMode
     ? [
-        { id: 'theory', label: '📘 1. Понять' },
-        { id: 'interactive', label: '🎮 2. Потренироваться' },
-        { id: 'homework', label: '📝 3. Сдать ДЗ' },
-        { id: 'passport', label: '📋 Паспорт КТП' },
+        { id: 'theory', label: '📘 1. Понять', shortLabel: '📘 Понять' },
+        { id: 'interactive', label: '🎮 2. Потренироваться', shortLabel: '🎮 Тренажёр' },
+        { id: 'homework', label: '📝 3. Сдать ДЗ', shortLabel: '📝 ДЗ' },
+        { id: 'passport', label: '📋 Паспорт КТП', shortLabel: '📋 КТП' },
       ]
     : [
-        { id: 'theory', label: '📘 1. Понять' },
-        { id: 'interactive', label: '🎮 2. Потренироваться' },
-        { id: 'homework', label: '📝 3. Сдать ДЗ' },
+        { id: 'theory', label: '📘 1. Понять', shortLabel: '📘 Понять' },
+        { id: 'interactive', label: '🎮 2. Потренироваться', shortLabel: '🎮 Тренажёр' },
+        { id: 'homework', label: '📝 3. Сдать ДЗ', shortLabel: '📝 ДЗ' },
       ];
 
   return (
@@ -307,7 +347,7 @@ export default function CourseWorkspace({
               </h1>
               <p className="text-[11px] text-slate-500 truncate flex items-center gap-1.5">
                 <Link href="/today" className="text-indigo-600 font-semibold hover:underline">
-                  🏠 Сегодня
+                  Сегодня
                 </Link>
                 <span>·</span>
                 <Link href="/courses" className="hover:underline">
@@ -317,7 +357,7 @@ export default function CourseWorkspace({
                   <>
                     <span>·</span>
                     <span>
-                      {course.academic_year} · {course.total_hours} ч
+                      {course.total_hours} ч · {course.academic_year}
                     </span>
                   </>
                 )}
@@ -366,6 +406,7 @@ export default function CourseWorkspace({
                 >
                   📥 ДЗ
                 </Link>
+
                 <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200 shrink-0">
                   <button
                     type="button"
@@ -376,7 +417,7 @@ export default function CourseWorkspace({
                         : 'text-slate-600'
                     }`}
                   >
-                    👁️ Просмотр
+                    Просмотр
                   </button>
                   <button
                     type="button"
@@ -600,11 +641,7 @@ export default function CourseWorkspace({
         )}
 
         {/* Основной контент */}
-        <main
-          className={`flex-1 min-w-0 p-3 sm:p-6 lg:p-8 ${
-            boardMode ? 'pb-24' : 'pb-24'
-          }`}
-        >
+        <main className="flex-1 min-w-0 p-3 sm:p-6 lg:p-8 pb-24">
           {!activeTopic ? (
             <div className="max-w-3xl mx-auto bg-white rounded-3xl border border-slate-200 p-10 text-center space-y-2">
               <div className="text-3xl">📚</div>
@@ -718,9 +755,16 @@ export default function CourseWorkspace({
                 )}
               </section>
 
-              {/* 3 понятных шага урока */}
-              <nav className="bg-white p-1.5 rounded-2xl border border-slate-200 overflow-x-auto">
-                <div className="flex gap-1 min-w-max">
+              {/* 3 понятных шага урока (все видны сразу на телефоне без скрытой прокрутки) */}
+              <nav
+                ref={tabsNavRef}
+                className="scroll-mt-20 bg-white p-1.5 rounded-2xl border border-slate-200"
+              >
+                <div
+                  className={`grid gap-1 ${
+                    teacherMode ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'
+                  }`}
+                >
                   {tabs.map((tab) => (
                     <button
                       key={tab.id}
@@ -729,13 +773,14 @@ export default function CourseWorkspace({
                         playSound('click');
                         setActiveTab(tab.id);
                       }}
-                      className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition ${
+                      className={`px-2 sm:px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition text-center ${
                         activeTab === tab.id
                           ? 'bg-indigo-600 text-white shadow-xs'
                           : 'text-slate-600 hover:bg-slate-100'
                       }`}
                     >
-                      {tab.label}
+                      <span className="sm:hidden">{tab.shortLabel}</span>
+                      <span className="hidden sm:inline">{tab.label}</span>
                     </button>
                   ))}
                 </div>
@@ -916,7 +961,9 @@ export default function CourseWorkspace({
         </div>
       )}
 
-      {boardMode && <BoardDrawOverlay onExitBoard={() => setBoardMode(false)} />}
+      {boardMode && (
+        <BoardDrawOverlay onExitBoard={() => setBoardMode(false)} />
+      )}
 
       {scheduleModalOpen && activeTopic && (
         <ScheduleTopicModal
@@ -927,7 +974,11 @@ export default function CourseWorkspace({
           onSaved={(item) => {
             setSchedules((prev) => {
               const filtered = prev.filter(
-                (s) => !(s.classroom_id === item.classroom_id && s.topic_id === item.topic_id)
+                (s) =>
+                  !(
+                    s.classroom_id === item.classroom_id &&
+                    s.topic_id === item.topic_id
+                  )
               );
               return [...filtered, item];
             });
@@ -935,7 +986,8 @@ export default function CourseWorkspace({
           onDeleted={(classroomId, topicId) => {
             setSchedules((prev) =>
               prev.filter(
-                (s) => !(s.classroom_id === classroomId && s.topic_id === topicId)
+                (s) =>
+                  !(s.classroom_id === classroomId && s.topic_id === topicId)
               )
             );
           }}
