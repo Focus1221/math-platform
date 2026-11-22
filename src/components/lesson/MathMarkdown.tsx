@@ -4,15 +4,28 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 
-export default function MathMarkdown({ content }: { content: string }) {
+interface Props {
+  content: string;
+  large?: boolean;
+}
+
+export default function MathMarkdown({ content, large = false }: Props) {
   return (
-    <div className="space-y-2 text-sm sm:text-[15px] text-slate-700 leading-relaxed">
+    <div
+      className={`space-y-2 text-slate-700 leading-relaxed ${
+        large ? 'text-base sm:text-lg lg:text-xl' : 'text-sm sm:text-[15px]'
+      }`}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkMath]}
         rehypePlugins={[rehypeKatex]}
         components={{
           h3: ({ children }) => (
-            <h3 className="text-base sm:text-lg font-bold text-slate-900 mt-5 mb-2 flex items-center gap-2">
+            <h3
+              className={`font-bold text-slate-900 mt-5 mb-2 flex items-center gap-2 ${
+                large ? 'text-lg sm:text-xl lg:text-2xl' : 'text-base sm:text-lg'
+              }`}
+            >
               <span className="w-1.5 h-5 rounded-full bg-indigo-500 inline-block shrink-0" />
               <span>{children}</span>
             </h3>

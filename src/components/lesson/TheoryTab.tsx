@@ -9,6 +9,7 @@ interface Props {
   topic: Topic;
   materials: Material[];
   canEdit: boolean;
+  boardMode?: boolean;
   onTopicUpdated: (updated: Topic) => void;
   onMaterialsChanged: (next: Material[]) => void;
 }
@@ -36,10 +37,12 @@ const KIND_META: Record<string, { label: string; icon: string; cls: string }> = 
   },
 };
 
+// В аргументах функции:
 export default function TheoryTab({
   topic,
   materials,
   canEdit,
+  boardMode = false,
   onTopicUpdated,
   onMaterialsChanged,
 }: Props) {
@@ -150,10 +153,16 @@ export default function TheoryTab({
     }
   }
 
+  const hideEmptyMaterials = boardMode && !canEdit && visibleMaterials.length === 0;
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
       {/* Левая колонка: Конспект */}
-      <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
+      <div
+        className={`${
+          hideEmptyMaterials ? 'lg:col-span-3' : 'lg:col-span-2'
+        } bg-white rounded-3xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4`}
+      >
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <h3 className="text-base sm:text-lg font-bold text-slate-900">
             📘 Конспект урока
@@ -196,11 +205,12 @@ export default function TheoryTab({
             </div>
           </div>
         ) : (
-          <MathMarkdown content={topic.theory_md || ''} />
+          <MathMarkdown content={topic.theory_md || ''} large={boardMode} />
         )}
       </div>
 
       {/* Правая колонка: Файлы и презентации */}
+      {!hideEmptyMaterials && (
       <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 space-y-4 h-fit">
         <div className="flex items-center justify-between">
           <h3 className="text-base font-bold text-slate-900">
@@ -318,6 +328,6 @@ export default function TheoryTab({
           </form>
         )}
       </div>
-    </div>
+    )}</div>
   );
 }

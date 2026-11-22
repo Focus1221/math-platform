@@ -427,7 +427,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
                   )}
                 </div>
 
-                <MathMarkdown content="{hw.question_md}"/>
+                <MathMarkdown content={hw.question_md} />
 
                 {/* Тест */}
                 {hw.type === 'test' && (
