@@ -11,6 +11,16 @@ interface Props {
   profile: Profile | null;
 }
 
+interface DraftGenTask {
+  type: 'test' | 'input' | 'open';
+  difficulty: 'base' | 'standard' | 'pro';
+  points: number;
+  question_md: string;
+  options: string[];
+  correct_answer: string;
+  solution_hint: string;
+}
+
 const DIFF_META: Record<HomeworkTask['difficulty'], { label: string; cls: string }> = {
   base: { label: 'База', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   standard: { label: 'Стандарт', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
@@ -28,7 +38,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Поля конструктора ДЗ (режим учителя)
+  // Поля ручного конструктора ДЗ
   const [hwType, setHwType] = useState<'test' | 'input' | 'open'>('test');
   const [difficulty, setDifficulty] = useState<'base' | 'standard' | 'pro'>('standard');
   const [points, setPoints] = useState(2);
@@ -38,8 +48,18 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
   const [solutionHint, setSolutionHint] = useState('');
   const [creating, setCreating] = useState(false);
 
+  // Поля ИИ-генератора ДЗ
+  const [aiCount, setAiCount] = useState<3 | 5>(3);
+  const [aiWish, setAiWish] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [aiDrafts, setAiDrafts] = useState<DraftGenTask[]>([]);
+  const [savingDrafts, setSavingDrafts] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
+    setAiDrafts([]);
+    setAiError('');
 
     async function load() {
       setLoading(true);
@@ -236,6 +256,82 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
     setCreating(false);
   }
 
+  async function handleGenerateAi() {
+    setAiLoading(true);
+    setAiError('');
+    try {
+      const res = await fetch('/api/teacher/generate-homework', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topicId: topic.id,
+          count: aiCount,
+          extraWish: aiWish,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAiError(data.error || 'Ошибка генерации');
+        return;
+      }
+      setAiDrafts(data.tasks || []);
+    } catch {
+      setAiError('Сетевая ошибка при обращении к ИИ.');
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
+  function updateDraft(index: number, patch: Partial<DraftGenTask>) {
+    setAiDrafts((prev) =>
+      prev.map((item, idx) => (idx === index ? { ...item, ...patch } : item))
+    );
+  }
+
+  async function handleSaveAiDrafts() {
+    if (aiDrafts.length === 0) return;
+    setSavingDrafts(true);
+    let nextOrder = tasks.length
+      ? Math.max(...tasks.map((t) => t.order_index)) + 1
+      : 1;
+    const inserted: HomeworkTask[] = [];
+
+    for (const draft of aiDrafts) {
+      if (!draft.question_md.trim()) continue;
+      const { data: created, error } = await supabase
+        .from('homework_tasks')
+        .insert({
+          topic_id: topic.id,
+          order_index: nextOrder++,
+          type: draft.type,
+          difficulty: draft.difficulty,
+          question_md: draft.question_md.trim(),
+          options: draft.type === 'test' ? draft.options : [],
+          points: Math.max(1, draft.points),
+        })
+        .select()
+        .single();
+
+      if (!error && created) {
+        inserted.push(created as HomeworkTask);
+        if (draft.type !== 'open') {
+          await supabase.from('homework_answer_keys').insert({
+            task_id: created.id,
+            correct_answer: draft.correct_answer.trim(),
+            solution_hint: draft.solution_hint.trim(),
+          });
+        }
+      }
+    }
+
+    if (inserted.length > 0) {
+      setTasks((prev) => [...prev, ...inserted]);
+      setAiDrafts([]);
+      setAiWish('');
+    }
+    setSavingDrafts(false);
+  }
+
   async function handleDeleteTask(taskId: string) {
     if (!confirm('Удалить это домашнее задание?')) return;
     const { error } = await supabase.from('homework_tasks').delete().eq('id', taskId);
@@ -286,7 +382,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
           </p>
           <p className="text-xs text-slate-500">
             {canEdit
-              ? 'Используй конструктор ниже, чтобы добавить тест или задачу с фото тетради.'
+              ? 'Нажми «Сгенерировать через ИИ» ниже или добавь задание вручную.'
               : 'Загляни во вкладку «Интерактив и игры», чтобы потренироваться!'}
           </p>
         </div>
@@ -331,9 +427,9 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
                   )}
                 </div>
 
-                <MathMarkdown content={hw.question_md} />
+                <MathMarkdown content="{hw.question_md}"/>
 
-                {/* Тип 1: Тест */}
+                {/* Тест */}
                 {hw.type === 'test' && (
                   <div className="space-y-2.5">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -373,7 +469,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
                   </div>
                 )}
 
-                {/* Тип 2: Ввод числа / дроби */}
+                {/* Краткий ответ */}
                 {hw.type === 'input' && (
                   <div className="space-y-2.5">
                     <form
@@ -417,14 +513,13 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
                   </div>
                 )}
 
-                {/* Подсказка после неверной попытки */}
                 {hints[hw.id] && (
                   <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
                     💡 <strong>Подсказка:</strong> {hints[hw.id]}
                   </div>
                 )}
 
-                {/* Тип 3: Развёрнутое решение + фото тетради */}
+                {/* Развёрнутое решение */}
                 {hw.type === 'open' && (
                   <div className="space-y-3">
                     <textarea
@@ -507,7 +602,165 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
         </div>
       )}
 
-      {/* Конструктор нового задания (только для учителя) */}
+      {/* ИИ-генератор ДЗ (только для учителя) */}
+      {canEdit && (
+        <div className="bg-gradient-to-br from-violet-50 via-white to-indigo-50 rounded-3xl border-2 border-violet-200 shadow-xs p-5 sm:p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 className="text-sm sm:text-base font-extrabold text-violet-950">
+                ✨ ИИ-генератор ДЗ по теме и ЦО
+              </h4>
+              <p className="text-xs text-slate-600">
+                Gemini составит разноуровневый комплект (База / Стандарт / Профи) с ключами. Ты проверишь и сохранишь.
+              </p>
+            </div>
+            <div className="inline-flex p-1 bg-white rounded-xl border border-violet-200">
+              {([3, 5] as const).map((cnt) => (
+                <button
+                  key={cnt}
+                  type="button"
+                  onClick={() => setAiCount(cnt)}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition ${
+                    aiCount === cnt ? 'bg-violet-600 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  {cnt} задания
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2.5">
+            <input
+              type="text"
+              value={aiWish}
+              onChange={(e) => setAiWish(e.target.value)}
+              placeholder="Пожелание (необязательно, напр.: добавь текстовую задачу про покупки в тенге)"
+              className="flex-1 px-3.5 py-2.5 text-xs sm:text-sm bg-white border border-violet-200 rounded-xl focus:outline-none focus:border-violet-500"
+            />
+            <button
+              type="button"
+              disabled={aiLoading}
+              onClick={handleGenerateAi}
+              className="px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:opacity-60 text-white text-xs sm:text-sm font-bold shadow-xs transition shrink-0"
+            >
+              {aiLoading ? 'Генерация...' : `✨ Сгенерировать (${aiCount})`}
+            </button>
+          </div>
+
+          {aiError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700">
+              {aiError}
+            </div>
+          )}
+
+          {aiDrafts.length > 0 && (
+            <div className="space-y-3 pt-2 border-t border-violet-200/70">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold text-violet-900">
+                  Проверь черновики перед добавлением в урок ({aiDrafts.length}):
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAiDrafts([])}
+                    className="px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-600"
+                  >
+                    Отменить
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingDrafts}
+                    onClick={handleSaveAiDrafts}
+                    className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-bold transition"
+                  >
+                    {savingDrafts ? 'Сохранение...' : `💾 Сохранить все (${aiDrafts.length})`}
+                  </button>
+                </div>
+              </div>
+
+              {aiDrafts.map((draft, i) => (
+                <div
+                  key={i}
+                  className="bg-white rounded-2xl border border-violet-200 p-4 space-y-2.5"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs font-bold">
+                      <span className="px-2 py-0.5 rounded-lg bg-violet-100 text-violet-800">
+                        #{i + 1} · {draft.type === 'test' ? 'Тест' : draft.type === 'input' ? 'Ответ' : 'Открытая'}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700">
+                        {DIFF_META[draft.difficulty].label} · {draft.points} б.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAiDrafts((prev) => prev.filter((_, idx) => idx !== i))
+                      }
+                      className="text-xs font-bold text-rose-500 hover:underline"
+                    >
+                      Убрать
+                    </button>
+                  </div>
+
+                  <textarea
+                    rows={2}
+                    value={draft.question_md}
+                    onChange={(e) => updateDraft(i, { question_md: e.target.value })}
+                    className="w-full p-2.5 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl"
+                  />
+
+                  <div className="p-2.5 rounded-xl bg-slate-50/70 border border-slate-100">
+                    <div className="text-[10px] font-bold uppercase text-slate-400 mb-1">
+                      Как увидит ученик:
+                    </div>
+                    <MathMarkdown content="{draft.question_md}"/>
+                  </div>
+
+                  {draft.type === 'test' && (
+                    <input
+                      type="text"
+                      value={draft.options.join('; ')}
+                      onChange={(e) =>
+                        updateDraft(i, {
+                          options: e.target.value
+                            .split(';')
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                        })
+                      }
+                      className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+                      placeholder="Варианты через ;"
+                    />
+                  )}
+
+                  {draft.type !== 'open' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={draft.correct_answer}
+                        onChange={(e) => updateDraft(i, { correct_answer: e.target.value })}
+                        className="px-3 py-2 text-xs font-bold text-emerald-800 bg-emerald-50/50 border border-emerald-200 rounded-xl"
+                        placeholder="Правильный ответ"
+                      />
+                      <input
+                        type="text"
+                        value={draft.solution_hint}
+                        onChange={(e) => updateDraft(i, { solution_hint: e.target.value })}
+                        className="px-3 py-2 text-xs bg-amber-50/40 border border-amber-200 rounded-xl"
+                        placeholder="Подсказка при ошибке"
+                      />
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Ручной конструктор нового задания */}
       {canEdit && (
         <form
           onSubmit={handleCreateTask}
@@ -515,7 +768,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
         >
           <div className="flex items-center justify-between">
             <h4 className="text-sm sm:text-base font-bold text-indigo-900">
-              🛠️ Конструктор нового задания
+              🛠️ Добавить задание вручную
             </h4>
             <span className="text-xs font-semibold text-indigo-600">
               Поддерживает формулы $LaTeX$

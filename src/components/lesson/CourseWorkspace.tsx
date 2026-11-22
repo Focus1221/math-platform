@@ -1,5 +1,5 @@
 'use client';
-
+import TopicEditorModal from './TopicEditorModal';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
@@ -40,7 +40,7 @@ export default function CourseWorkspace({
   const [filter, setFilter] = useState<'all' | 'assessment' | 'completed'>('all');
   const [completedIds, setCompletedIds] = useState<string[]>(initialCompletedIds);
   const [mobileOpen, setMobileOpen] = useState(false);
-
+  const [editingTopicModal, setEditingTopicModal] = useState(false);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [notesDraft, setNotesDraft] = useState('');
   const [newTopicTitle, setNewTopicTitle] = useState('');
@@ -427,7 +427,7 @@ export default function CourseWorkspace({
               </p>
             </div>
           ) : (
-            <div className="max-w-5xl mx-auto space-y-5">
+           <div className="max-w-5xl mx-auto space-y-5">
               {/* Заголовок темы */}
               <section className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4">
                 <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
@@ -455,19 +455,30 @@ export default function CourseWorkspace({
                     </h2>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => toggleComplete(activeTopic.id)}
-                    className={`px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-bold transition shrink-0 ${
-                      completedIds.includes(activeTopic.id)
-                        ? 'bg-emerald-500 text-white'
-                        : 'bg-slate-900 hover:bg-indigo-600 text-white'
-                    }`}
-                  >
-                    {completedIds.includes(activeTopic.id)
-                      ? '✓ Тема пройдена'
-                      : '○ Отметить пройденной'}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {teacherMode && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingTopicModal(true)}
+                        className="px-3.5 py-2.5 rounded-2xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs sm:text-sm font-bold transition"
+                      >
+                        ⚙️ Настроить тему
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => toggleComplete(activeTopic.id)}
+                      className={`px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-bold transition ${
+                        completedIds.includes(activeTopic.id)
+                          ? 'bg-emerald-500 text-white'
+                          : 'bg-slate-900 hover:bg-indigo-600 text-white'
+                      }`}
+                    >
+                      {completedIds.includes(activeTopic.id)
+                        ? '✓ Тема пройдена'
+                        : '○ Отметить пройденной'}
+                    </button>
+                  </div>
                 </div>
 
                 {activeTopic.value_example && (
@@ -597,6 +608,27 @@ export default function CourseWorkspace({
           )}
         </main>
       </div>
+      {editingTopicModal && activeTopic && (
+        <TopicEditorModal
+          topic={activeTopic}
+          onClose={() => setEditingTopicModal(false)}
+          onUpdated={(upd) => {
+            setTopics((prev) =>
+              prev
+                .map((t) => (t.id === upd.id ? upd : t))
+                .sort((a, b) => a.order_index - b.order_index)
+            );
+            setActiveQuarter(upd.quarter);
+          }}
+          onDeleted={(deletedId) => {
+            setTopics((prev) => {
+              const rest = prev.filter((t) => t.id !== deletedId);
+              setActiveTopicId(rest[0]?.id || '');
+              return rest;
+            });
+          }}
+        />
+      )}
     </div>
   );
 }
