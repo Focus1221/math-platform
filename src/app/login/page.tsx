@@ -199,7 +199,7 @@ export default function LoginPage() {
                 autoCorrect="off"
                 value={studentLogin}
                 onChange={(e) => setStudentLogin(e.target.value)}
-                placeholder="Например: ulan5a"
+                placeholder="Например: aliya5a"
                 className="w-full px-4 py-3 text-base font-bold font-mono bg-slate-50 border-2 border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500"
               />
             </div>

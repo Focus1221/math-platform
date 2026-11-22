@@ -739,7 +739,7 @@ export default function JournalClient({
                     rows={4}
                     value={bulkNamesText}
                     onChange={(e) => setBulkNamesText(e.target.value)}
-                    placeholder={'Бутакбай Улан\nСерикбай Алия\nНурланов Арман'}
+                    placeholder={'Серикбай Алия\nНурланов Арман\nАхметов Диас'}
                     className="w-full p-3 text-xs sm:text-sm bg-white border border-indigo-200 rounded-xl focus:outline-none focus:border-indigo-500"
                   />
 
