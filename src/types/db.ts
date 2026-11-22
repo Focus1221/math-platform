@@ -72,3 +72,12 @@ export interface Submission {
   teacher_comment: string;
   updated_at: string;
 }
+
+export interface ClassScheduleItem {
+  id: string;
+  classroom_id: string;
+  topic_id: string;
+  lesson_date: string;
+  hw_due_date: string | null;
+  note: string;
+}
