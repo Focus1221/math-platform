@@ -1,5 +1,6 @@
 'use client';
-
+import { playSound } from '@/lib/audio/sound';
+import { compressImageFile } from '@/lib/media/compressImage';
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import MathMarkdown from './MathMarkdown';
@@ -141,6 +142,11 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
       }
 
       const sub = data.submission as Submission;
+      if (sub.status === 'checked') {
+        playSound(sub.is_correct ? 'success' : 'error');
+      } else {
+        playSound('success');
+      }
       setSubmissions((prev) => ({ ...prev, [taskId]: sub }));
       setDraftAnswers((prev) => ({ ...prev, [taskId]: sub.answer_text || '' }));
       if (data.hint) {
@@ -162,18 +168,21 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
       alert('Войди в аккаунт, чтобы прикрепить фото тетради.');
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      alert('Максимальный размер фото — 5 МБ.');
+
+    setBusyTaskId(taskId);
+    const preparedFile = await compressImageFile(file);
+    if (preparedFile.size > 5 * 1024 * 1024) {
+      alert('Фото всё ещё слишком большое (макс. 5 МБ).');
+      setBusyTaskId(null);
       return;
     }
 
-    setBusyTaskId(taskId);
-    const ext = file.name.split('.').pop() || 'jpg';
+    const ext = preparedFile.name.split('.').pop() || 'jpg';
     const path = `${profile.id}/${taskId}_${Date.now()}.${ext}`;
 
     const { error: upErr } = await supabase.storage
       .from('student-submissions')
-      .upload(path, file);
+      .upload(path, preparedFile);
 
     if (upErr) {
       alert('Ошибка загрузки фото: ' + upErr.message);
@@ -499,6 +508,38 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
                         {busy ? 'Проверка...' : 'Проверить'}
                       </button>
                     </form>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(['/', ',', '-'] as const).map((sym) => (
+                        <button
+                          key={sym}
+                          type="button"
+                          onClick={() => {
+                            playSound('click');
+                            setDraftAnswers((prev) => ({
+                              ...prev,
+                              [hw.id]: (prev[hw.id] ?? '') + sym,
+                            }));
+                          }}
+                          className="w-9 h-8 rounded-lg bg-slate-100 hover:bg-indigo-100 text-slate-800 font-extrabold text-sm transition"
+                        >
+                          {sym === '-' ? '−' : sym}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playSound('click');
+                          setDraftAnswers((prev) => ({
+                            ...prev,
+                            [hw.id]: (prev[hw.id] ?? '').slice(0, -1),
+                          }));
+                        }}
+                        className="px-2.5 h-8 rounded-lg bg-slate-100 hover:bg-rose-100 text-slate-700 font-bold text-xs transition"
+                        title="Стереть символ"
+                      >
+                        ⌫
+                      </button>
+                    </div>
                     {sub?.status === 'checked' && (
                       <div
                         className={`text-xs font-bold ${

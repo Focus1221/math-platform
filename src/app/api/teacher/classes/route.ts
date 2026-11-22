@@ -11,6 +11,7 @@ async function requireTeacher() {
   if (!user) return null;
 
   const admin = createAdminSupabase();
+  
   const { data: profile } = await admin
     .from('profiles')
     .select('id, role')
@@ -82,7 +83,7 @@ export async function PATCH(request: Request) {
     .update({ classroom_id: classroomId })
     .eq('id', studentId)
     .eq('role', 'student');
-
+    await ctx.admin.from('student_access_cards').update({ classroom_id: classroomId }).eq('student_id', studentId);
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

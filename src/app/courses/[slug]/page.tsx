@@ -3,16 +3,21 @@ import { connection } from 'next/server';
 import { notFound } from 'next/navigation';
 import { createServerSupabase } from '@/lib/supabase/server';
 import CourseWorkspace from '@/components/lesson/CourseWorkspace';
-import type { Course, Profile, Topic } from '@/types/db';
+import type { ClassScheduleItem, Course, Profile, Topic } from '@/types/db';
 
 async function CourseDetailContent({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ topic?: string; tab?: string }>;
 }) {
   await connection();
-  const { slug } = await params;
-  // ...дальше код без изменений
+  const [{ slug }, { topic: initialTopicId, tab: initialTab }] = await Promise.all([
+    params,
+    searchParams,
+  ]);
+
   const supabase = await createServerSupabase();
 
   const { data: course } = await supabase
@@ -32,8 +37,11 @@ async function CourseDetailContent({
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
   let profile: Profile | null = null;
   let completedIds: string[] = [];
+  let classrooms: { id: string; name: string; join_code: string }[] = [];
+  let schedules: ClassScheduleItem[] = [];
 
   if (user) {
     const { data: prof } = await supabase
@@ -50,6 +58,21 @@ async function CourseDetailContent({
       .eq('completed', true);
 
     completedIds = (prog || []).map((p: { topic_id: string }) => p.topic_id);
+
+    if (profile?.role === 'teacher') {
+      const [{ data: clsRows }, { data: schRows }] = await Promise.all([
+        supabase.from('classrooms').select('id, name, join_code').order('name'),
+        supabase.from('class_schedule').select('*'),
+      ]);
+      classrooms = clsRows || [];
+      schedules = (schRows as ClassScheduleItem[]) || [];
+    } else if (profile?.classroom_id) {
+      const { data: schRows } = await supabase
+        .from('class_schedule')
+        .select('*')
+        .eq('classroom_id', profile.classroom_id);
+      schedules = (schRows as ClassScheduleItem[]) || [];
+    }
   }
 
   return (
@@ -58,14 +81,20 @@ async function CourseDetailContent({
       initialTopics={(topics as Topic[]) || []}
       initialCompletedIds={completedIds}
       profile={profile}
+      classrooms={classrooms}
+      initialSchedules={schedules}
+      initialTopicId={initialTopicId}
+      initialTab={initialTab}
     />
   );
 }
 
 export default function CourseDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ topic?: string; tab?: string }>;
 }) {
   return (
     <Suspense
@@ -75,7 +104,7 @@ export default function CourseDetailPage({
         </div>
       }
     >
-      <CourseDetailContent params={params} />
+      <CourseDetailContent params={params} searchParams={searchParams} />
     </Suspense>
   );
 }

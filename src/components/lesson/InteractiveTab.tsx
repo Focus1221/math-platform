@@ -1,5 +1,5 @@
 'use client';
-
+import { playSound } from '@/lib/audio/sound';
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import PercentGridSim from '@/components/simulators/PercentGridSim';
@@ -106,6 +106,11 @@ export default function InteractiveTab({
     const nextStreak = isCorrect ? streak + 1 : 0;
     setCorrectCount(nextCorrect);
     setStreak(nextStreak);
+    if (isCorrect) {
+      playSound(nextStreak > 0 && nextStreak % 5 === 0 ? 'celebrate' : 'success');
+    } else {
+      playSound('error');
+    }
 
     if (!profile) return;
     await supabase.from('topic_progress').upsert({

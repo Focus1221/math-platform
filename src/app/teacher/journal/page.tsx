@@ -68,6 +68,8 @@ async function JournalContent() {
     { data: taskRows },
     { data: progressRows },
     { data: submissionRows },
+    { data: cardRows }
+    
   ] = await Promise.all([
     admin.from('classrooms').select('id, name, join_code, grade_number').order('name'),
     admin
@@ -86,6 +88,9 @@ async function JournalContent() {
       .from('topic_progress')
       .select('student_id, topic_id, completed, sim_correct_count'),
     admin.from('submissions').select('student_id, task_id, score'),
+    admin
+  .from('student_access_cards')
+  .select('student_id, login_username, pin_code'),
   ]);
 
   const emailMap = new Map<string, string>();
@@ -93,12 +98,25 @@ async function JournalContent() {
     if (u.email) emailMap.set(u.id, u.email);
   }
 
-  const students: StudentRow[] = (studentProfiles || []).map((p) => ({
+ const cardMap = new Map<string, { login_username: string; pin_code: string }>();
+for (const c of cardRows || []) {
+  cardMap.set(c.student_id, {
+    login_username: c.login_username,
+    pin_code: c.pin_code,
+  });
+}
+
+const students: StudentRow[] = (studentProfiles || []).map((p) => {
+  const card = cardMap.get(p.id);
+  return {
     id: p.id,
     full_name: p.full_name || 'Ученик',
     email: emailMap.get(p.id) || '',
     classroom_id: p.classroom_id || null,
-  }));
+    login_username: card?.login_username || null,
+    pin_code: card?.pin_code || null,
+  };
+});
 
   const taskTopicMap = new Map<string, string>();
   const topicMaxPoints = new Map<string, number>();

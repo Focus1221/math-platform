@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminSupabase } from '@/lib/supabase/admin';
+import { generatePinCode, studentPinToPassword } from '@/lib/auth/studentLogin';
 
 export async function POST(request: Request) {
   try {
@@ -31,7 +32,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Не указан ID ученика' }, { status: 400 });
     }
 
-    // Защита: сбрасываем пароль только аккаунтам с ролью student
     const { data: target } = await admin
       .from('profiles')
       .select('role, full_name')
@@ -45,6 +45,36 @@ export async function POST(request: Request) {
       );
     }
 
+    const { data: card } = await admin
+      .from('student_access_cards')
+      .select('student_id, login_username')
+      .eq('student_id', studentId)
+      .maybeSingle();
+
+    if (card) {
+      const newPin = generatePinCode();
+      const { error } = await admin.auth.admin.updateUserById(studentId, {
+        password: studentPinToPassword(newPin),
+      });
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+
+      await admin
+        .from('student_access_cards')
+        .update({ pin_code: newPin, updated_at: new Date().toISOString() })
+        .eq('student_id', studentId);
+
+      return NextResponse.json({
+        ok: true,
+        isPin: true,
+        studentName: target.full_name,
+        loginUsername: card.login_username,
+        tempPassword: newPin,
+      });
+    }
+
     const tempPassword = `math-${Math.floor(1000 + Math.random() * 9000)}`;
     const { error } = await admin.auth.admin.updateUserById(studentId, {
       password: tempPassword,
@@ -56,6 +86,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       ok: true,
+      isPin: false,
       studentName: target.full_name,
       tempPassword,
     });

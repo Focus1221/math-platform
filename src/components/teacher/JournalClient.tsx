@@ -15,6 +15,8 @@ export interface StudentRow {
   full_name: string;
   email: string;
   classroom_id: string | null;
+  login_username?: string | null;
+  pin_code?: string | null;
 }
 
 export interface JournalCourse {
@@ -78,13 +80,27 @@ export default function JournalClient({
   const [newClassCode, setNewClassCode] = useState('');
   const [creatingClass, setCreatingClass] = useState(false);
 
-  // Уведомление о сброшенном пароле
+  // Массовое добавление учеников (логин + PIN)
+  const [bulkClassId, setBulkClassId] = useState<string>(initialClassrooms[0]?.id || '');
+  const [bulkNamesText, setBulkNamesText] = useState('');
+  const [bulkCreating, setBulkCreating] = useState(false);
+  const [bulkNotice, setBulkNotice] = useState('');
+
+  // Уведомление о сброшенном пароле / PIN
   const [resetResult, setResetResult] = useState<{
     name: string;
-    email: string;
+    subtitle: string;
     password: string;
+    isPin: boolean;
   } | null>(null);
   const [busyStudentId, setBusyStudentId] = useState<string | null>(null);
+
+  const activeBulkClassId = useMemo(() => {
+    if (bulkClassId && classrooms.some((c) => c.id === bulkClassId)) {
+      return bulkClassId;
+    }
+    return classrooms[0]?.id || '';
+  }, [bulkClassId, classrooms]);
 
   // Быстрые словари для мгновенного рендера таблицы
   const progressMap = useMemo(() => {
@@ -146,7 +162,9 @@ export default function JournalClient({
         alert(data.error || 'Не удалось создать класс');
         return;
       }
-      setClassrooms((prev) => [...prev, data.classroom as ClassroomRow]);
+      const created = data.classroom as ClassroomRow;
+      setClassrooms((prev) => [...prev, created]);
+      if (!bulkClassId) setBulkClassId(created.id);
       setNewClassName('');
       setNewClassCode('');
     } finally {
@@ -155,16 +173,62 @@ export default function JournalClient({
   }
 
   async function handleDeleteClass(cls: ClassroomRow) {
-    if (!confirm(`Удалить класс ${cls.name}? Ученики не удалятся, но перейдут в «Без класса».`)) {
+    if (
+      !confirm(
+        `Удалить класс ${cls.name}? Ученики не удалятся, но перейдут в «Без класса».`
+      )
+    ) {
       return;
     }
-    const res = await fetch(`/api/teacher/classes?id=${cls.id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/teacher/classes?id=${cls.id}`, {
+      method: 'DELETE',
+    });
     if (res.ok) {
       setClassrooms((prev) => prev.filter((c) => c.id !== cls.id));
       setStudents((prev) =>
         prev.map((s) => (s.classroom_id === cls.id ? { ...s, classroom_id: null } : s))
       );
       if (selectedClassId === cls.id) setSelectedClassId('all');
+    }
+  }
+
+  async function handleBulkAddStudents(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeBulkClassId || !bulkNamesText.trim()) return;
+    setBulkCreating(true);
+    setBulkNotice('');
+    try {
+      const res = await fetch('/api/teacher/bulk-students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          classroomId: activeBulkClassId,
+          namesText: bulkNamesText,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Не удалось добавить учеников');
+        return;
+      }
+      const added = (data.created || []) as StudentRow[];
+      if (added.length > 0) {
+        setStudents((prev) => [...prev, ...added]);
+        setBulkNamesText('');
+        setBulkNotice(
+          `Создано учеников: ${added.length}. Теперь можно сразу нажать «🖨️ Карточки A4» у выбранного класса!`
+        );
+      }
+      if (Array.isArray(data.failed) && data.failed.length > 0) {
+        alert(
+          `Не удалось создать (${data.failed.length}): ` +
+            data.failed
+              .map((f: { name: string; reason: string }) => `${f.name} (${f.reason})`)
+              .join(', ')
+        );
+      }
+    } finally {
+      setBulkCreating(false);
     }
   }
 
@@ -188,7 +252,8 @@ export default function JournalClient({
   }
 
   async function handleResetPassword(student: StudentRow) {
-    if (!confirm(`Сбросить пароль ученику ${student.full_name}?`)) return;
+    const label = student.login_username ? 'PIN-код' : 'пароль';
+    if (!confirm(`Сбросить ${label} ученику ${student.full_name}?`)) return;
     setBusyStudentId(student.id);
     try {
       const res = await fetch('/api/teacher/reset-password', {
@@ -201,10 +266,23 @@ export default function JournalClient({
         alert(data.error || 'Ошибка сброса пароля');
         return;
       }
+
+      const isPin = Boolean(data.isPin);
+      if (isPin) {
+        setStudents((prev) =>
+          prev.map((s) =>
+            s.id === student.id ? { ...s, pin_code: data.tempPassword } : s
+          )
+        );
+      }
+
       setResetResult({
         name: student.full_name,
-        email: student.email,
+        subtitle: isPin
+          ? `логин: ${data.loginUsername || student.login_username}`
+          : student.email,
         password: data.tempPassword,
+        isPin,
       });
     } finally {
       setBusyStudentId(null);
@@ -240,8 +318,12 @@ export default function JournalClient({
         return '';
       });
 
-      const clsName = st.classroom_id ? classMap.get(st.classroom_id)?.name || '' : 'Без класса';
-      return [st.full_name, clsName, doneCount, totalScore, totalSim, ...cells].map(esc).join(';');
+      const clsName = st.classroom_id
+        ? classMap.get(st.classroom_id)?.name || ''
+        : 'Без класса';
+      return [st.full_name, clsName, doneCount, totalScore, totalSim, ...cells]
+        .map(esc)
+        .join(';');
     });
 
     const csv = '\uFEFF' + [headers.map(esc).join(';'), ...rows].join('\n');
@@ -255,7 +337,7 @@ export default function JournalClient({
   }
 
   return (
-    <div className="min-h-screen bg-[#F4F7FB]">
+    <div className="min-h-screen bg-[#F6F7FB]">
       <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
         <div className="max-w-[1600px] mx-auto px-4 h-16 flex items-center justify-between gap-3">
           <div>
@@ -263,7 +345,8 @@ export default function JournalClient({
               📊 Классы и журнал успеваемости
             </h1>
             <p className="text-xs text-slate-500">
-              Классов: <strong>{classrooms.length}</strong> · Учеников: <strong>{students.length}</strong>
+              Классов: <strong>{classrooms.length}</strong> · Учеников:{' '}
+              <strong>{students.length}</strong>
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -274,10 +357,10 @@ export default function JournalClient({
               📥 Проверка ДЗ
             </Link>
             <Link
-              href="/courses"
+              href="/today"
               className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 transition"
             >
-              ← К курсам
+              ← Сегодня
             </Link>
           </div>
         </div>
@@ -311,22 +394,23 @@ export default function JournalClient({
             <button
               type="button"
               onClick={exportCsv}
-              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs transition"
+              className="btn-tactile px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 text-white text-xs font-bold shadow-xs transition"
             >
               ⬇ Скачать таблицу (Excel / CSV)
             </button>
           )}
         </div>
 
-        {/* Баннер с новым паролем */}
+        {/* Баннер с новым паролем или PIN */}
         {resetResult && (
-          <div className="p-4 rounded-2xl bg-emerald-50 border-2 border-emerald-300 flex flex-wrap items-center justify-between gap-3">
+          <div className="p-4 rounded-2xl bg-emerald-50 border-2 border-emerald-300 flex flex-wrap items-center justify-between gap-3 animate-pop">
             <div className="text-xs sm:text-sm text-emerald-950 space-y-0.5">
               <div className="font-extrabold">
-                🔑 Пароль обновлён для: {resetResult.name} ({resetResult.email})
+                🔑 {resetResult.isPin ? 'PIN-код обновлён' : 'Пароль обновлён'} для:{' '}
+                {resetResult.name} ({resetResult.subtitle})
               </div>
               <div>
-                Временный пароль:{' '}
+                {resetResult.isPin ? 'Новый PIN-код:' : 'Временный пароль:'}{' '}
                 <code className="px-2 py-0.5 rounded-lg bg-white border border-emerald-300 font-mono text-base font-extrabold text-emerald-800">
                   {resetResult.password}
                 </code>
@@ -401,7 +485,8 @@ export default function JournalClient({
 
             {visibleStudents.length === 0 ? (
               <div className="bg-white rounded-3xl border border-slate-200 p-10 text-center text-sm text-slate-500">
-                В выбранном классе пока нет учеников. Перейди во вкладку «Классы и ученики», чтобы создать класс и выдать код.
+                В выбранном классе пока нет учеников. Перейди во вкладку «Классы и
+                ученики», чтобы создать класс и добавить детей списком.
               </div>
             ) : (
               <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-x-auto">
@@ -432,7 +517,9 @@ export default function JournalClient({
                         >
                           <div>№{t.order_index}</div>
                           {t.is_assessment && (
-                            <div className="text-[9px] font-extrabold text-amber-700">СОР</div>
+                            <div className="text-[9px] font-extrabold text-amber-700">
+                              СОР
+                            </div>
                           )}
                         </th>
                       ))}
@@ -461,30 +548,32 @@ export default function JournalClient({
                       return (
                         <tr key={st.id} className="hover:bg-indigo-50/30 transition">
                           <td className="sticky left-0 z-10 bg-white px-4 py-2.5 border-r border-slate-200">
-                            <div className="font-bold text-slate-900">{st.full_name}</div>
+                            <div className="font-bold text-slate-900">
+                              {st.full_name}
+                            </div>
                             <div className="text-[10px] text-slate-400">
                               {clsName ? `Класс ${clsName}` : 'Без класса'}
                             </div>
                           </td>
-                          <td className="px-3 py-2.5 text-center font-bold text-slate-700">
+                          <td className="px-3 py-2.5 text-center font-bold text-slate-700 tabular-nums">
                             {doneCount}/{visibleTopics.length}
                           </td>
-                          <td className="px-3 py-2.5 text-center font-extrabold text-indigo-700">
+                          <td className="px-3 py-2.5 text-center font-extrabold text-indigo-700 tabular-nums">
                             {totalScore}
                           </td>
-                          <td className="px-3 py-2.5 text-center font-bold text-emerald-700 border-r border-slate-200">
+                          <td className="px-3 py-2.5 text-center font-bold text-emerald-700 border-r border-slate-200 tabular-nums">
                             {totalSim}
                           </td>
                           {topicCells.map(({ t, p, sc }) => (
                             <td
                               key={t.id}
-                              title={`${t.title} — ${p?.completed ? 'Пройдена' : 'Не отмечена'}${
-                                t.maxPoints > 0 ? `, ДЗ: ${sc}/${t.maxPoints}` : ''
-                              }`}
+                              title={`${t.title} — ${
+                                p?.completed ? 'Пройдена' : 'Не отмечена'
+                              }${t.maxPoints > 0 ? `, ДЗ: ${sc}/${t.maxPoints}` : ''}`}
                               className="px-1.5 py-2.5 text-center"
                             >
                               {sc > 0 ? (
-                                <span className="inline-block px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-800 font-bold text-[11px]">
+                                <span className="inline-block px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-800 font-bold text-[11px] tabular-nums">
                                   {sc}/{t.maxPoints}
                                 </span>
                               ) : p?.completed ? (
@@ -552,7 +641,7 @@ export default function JournalClient({
                 <button
                   type="submit"
                   disabled={creatingClass}
-                  className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition"
+                  className="btn-tactile w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-xs font-bold transition"
                 >
                   {creatingClass ? 'Создание...' : 'Создать класс'}
                 </button>
@@ -565,11 +654,13 @@ export default function JournalClient({
                   </div>
                 ) : (
                   classrooms.map((cls) => {
-                    const count = students.filter((s) => s.classroom_id === cls.id).length;
+                    const count = students.filter(
+                      (s) => s.classroom_id === cls.id
+                    ).length;
                     return (
                       <div
                         key={cls.id}
-                        className="bg-white rounded-2xl border border-slate-200 p-4 flex items-center justify-between gap-2"
+                        className="bg-white rounded-2xl border border-slate-200 p-4 flex items-start justify-between gap-2"
                       >
                         <div>
                           <div className="text-sm font-extrabold text-slate-900">
@@ -579,13 +670,23 @@ export default function JournalClient({
                             Код:{' '}
                             <button
                               type="button"
-                              onClick={() => navigator.clipboard.writeText(cls.join_code)}
+                              onClick={() =>
+                                navigator.clipboard.writeText(cls.join_code)
+                              }
                               className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-mono font-bold hover:bg-indigo-100"
                               title="Нажми, чтобы скопировать код"
                             >
                               {cls.join_code} 📋
                             </button>{' '}
                             · {count} уч.
+                          </div>
+                          <div className="mt-2">
+                            <Link
+                              href={`/teacher/cards/${cls.id}`}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold transition"
+                            >
+                              🖨️ Карточки A4
+                            </Link>
                           </div>
                         </div>
                         <button
@@ -603,58 +704,136 @@ export default function JournalClient({
               </div>
             </div>
 
-            {/* Правая колонка: список учеников */}
-            <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-5 space-y-4">
-              <h2 className="text-sm font-extrabold text-slate-900">
-                Список учеников ({students.length})
-              </h2>
-
-              {students.length === 0 ? (
-                <div className="p-8 text-center text-xs text-slate-500">
-                  Пока нет зарегистрированных учеников.
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {students.map((st) => (
-                    <div
-                      key={st.id}
-                      className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-sm font-bold text-slate-900 truncate">
-                          {st.full_name}
-                        </div>
-                        <div className="text-xs text-slate-400 truncate">{st.email}</div>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        <select
-                          disabled={busyStudentId === st.id}
-                          value={st.classroom_id || ''}
-                          onChange={(e) => handleAssignClass(st.id, e.target.value)}
-                          className="px-3 py-1.5 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl"
-                        >
-                          <option value="">Без класса</option>
-                          {classrooms.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                            </option>
-                          ))}
-                        </select>
-
-                        <button
-                          type="button"
-                          disabled={busyStudentId === st.id}
-                          onClick={() => handleResetPassword(st)}
-                          className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition whitespace-nowrap"
-                        >
-                          🔑 Сбросить пароль
-                        </button>
-                      </div>
+            {/* Правая колонка: массовое добавление и список учеников */}
+            <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-5 space-y-5">
+              {/* Быстрое добавление учеников списком (без email) */}
+              {classrooms.length > 0 && (
+                <form
+                  onSubmit={handleBulkAddStudents}
+                  className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-extrabold text-indigo-950">
+                        📋 Добавить учеников списком (вход по логину + PIN)
+                      </h3>
+                      <p className="text-[11px] text-slate-600">
+                        Вставь список фамилий и имён (по одному на строку) — почта
+                        детям не понадобится.
+                      </p>
                     </div>
-                  ))}
-                </div>
+                    <select
+                      value={activeBulkClassId}
+                      onChange={(e) => setBulkClassId(e.target.value)}
+                      className="px-3 py-1.5 text-xs font-bold bg-white border border-indigo-200 rounded-xl"
+                    >
+                      {classrooms.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          Класс {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <textarea
+                    rows={4}
+                    value={bulkNamesText}
+                    onChange={(e) => setBulkNamesText(e.target.value)}
+                    placeholder={'Бутакбай Улан\nСерикбай Алия\nНурланов Арман'}
+                    className="w-full p-3 text-xs sm:text-sm bg-white border border-indigo-200 rounded-xl focus:outline-none focus:border-indigo-500"
+                  />
+
+                  {bulkNotice && (
+                    <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800">
+                      ✓ {bulkNotice}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Link
+                      href={`/teacher/cards/${activeBulkClassId}`}
+                      className="text-xs font-bold text-indigo-700 hover:underline"
+                    >
+                      🖨️ Открыть карточки для печати A4 →
+                    </Link>
+                    <button
+                      type="submit"
+                      disabled={bulkCreating}
+                      className="btn-tactile px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs font-extrabold"
+                    >
+                      {bulkCreating
+                        ? 'Создаём аккаунты...'
+                        : '+ Создать аккаунты и PIN-коды'}
+                    </button>
+                  </div>
+                </form>
               )}
+
+              <div className="space-y-3">
+                <h2 className="text-sm font-extrabold text-slate-900">
+                  Список учеников ({students.length})
+                </h2>
+
+                {students.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-500">
+                    Пока нет зарегистрированных учеников.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {students.map((st) => (
+                      <div
+                        key={st.id}
+                        className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-slate-900 truncate">
+                            {st.full_name}
+                          </div>
+                          <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5">
+                            {st.login_username ? (
+                              <>
+                                <span className="px-2 py-0.5 rounded-md bg-slate-100 font-mono font-bold text-slate-700">
+                                  {st.login_username}
+                                </span>
+                                <span className="px-2 py-0.5 rounded-md bg-indigo-50 font-mono font-bold text-indigo-700">
+                                  PIN: {st.pin_code}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-slate-400 truncate">{st.email}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <select
+                            disabled={busyStudentId === st.id}
+                            value={st.classroom_id || ''}
+                            onChange={(e) => handleAssignClass(st.id, e.target.value)}
+                            className="px-3 py-1.5 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl"
+                          >
+                            <option value="">Без класса</option>
+                            {classrooms.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+
+                          <button
+                            type="button"
+                            disabled={busyStudentId === st.id}
+                            onClick={() => handleResetPassword(st)}
+                            className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition whitespace-nowrap"
+                          >
+                            🔑 {st.login_username ? 'Новый PIN' : 'Сбросить пароль'}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )}
