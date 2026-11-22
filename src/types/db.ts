@@ -6,6 +6,7 @@ export interface Profile {
   role: UserRole;
   grade_number: number | null;
   class_name: string;
+  classroom_id?: string | null;
 }
 
 export interface Course {
