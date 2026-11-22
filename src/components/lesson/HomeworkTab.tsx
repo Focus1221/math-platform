@@ -1,0 +1,608 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import MathMarkdown from './MathMarkdown';
+import type { HomeworkTask, Profile, Submission, Topic } from '@/types/db';
+
+interface Props {
+  topic: Topic;
+  canEdit: boolean;
+  profile: Profile | null;
+}
+
+const DIFF_META: Record<HomeworkTask['difficulty'], { label: string; cls: string }> = {
+  base: { label: 'База', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  standard: { label: 'Стандарт', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
+  pro: { label: 'Профи', cls: 'bg-purple-50 text-purple-700 border-purple-200' },
+};
+
+export default function HomeworkTab({ topic, canEdit, profile }: Props) {
+  const supabase = createClient();
+
+  const [tasks, setTasks] = useState<HomeworkTask[]>([]);
+  const [submissions, setSubmissions] = useState<Record<string, Submission>>({});
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
+  const [draftAnswers, setDraftAnswers] = useState<Record<string, string>>({});
+  const [hints, setHints] = useState<Record<string, string>>({});
+  const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Поля конструктора ДЗ (режим учителя)
+  const [hwType, setHwType] = useState<'test' | 'input' | 'open'>('test');
+  const [difficulty, setDifficulty] = useState<'base' | 'standard' | 'pro'>('standard');
+  const [points, setPoints] = useState(2);
+  const [questionMd, setQuestionMd] = useState('');
+  const [optionsText, setOptionsText] = useState('');
+  const [correctAnswer, setCorrectAnswer] = useState('');
+  const [solutionHint, setSolutionHint] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      const { data: taskRows } = await supabase
+        .from('homework_tasks')
+        .select('*')
+        .eq('topic_id', topic.id)
+        .order('order_index', { ascending: true });
+
+      const loadedTasks = (taskRows as HomeworkTask[]) || [];
+      if (cancelled) return;
+      setTasks(loadedTasks);
+      setHints({});
+
+      if (profile && loadedTasks.length > 0) {
+        const { data: subRows } = await supabase
+          .from('submissions')
+          .select('*')
+          .eq('student_id', profile.id)
+          .in(
+            'task_id',
+            loadedTasks.map((t) => t.id)
+          );
+
+        if (cancelled) return;
+        const subMap: Record<string, Submission> = {};
+        const drafts: Record<string, string> = {};
+        const signedMap: Record<string, string> = {};
+
+        for (const sub of (subRows as Submission[]) || []) {
+          subMap[sub.task_id] = sub;
+          drafts[sub.task_id] = sub.answer_text || '';
+          if (sub.photo_path) {
+            const { data: signed } = await supabase.storage
+              .from('student-submissions')
+              .createSignedUrl(sub.photo_path, 3600);
+            if (signed?.signedUrl) signedMap[sub.task_id] = signed.signedUrl;
+          }
+        }
+
+        if (!cancelled) {
+          setSubmissions(subMap);
+          setDraftAnswers(drafts);
+          setPhotoUrls(signedMap);
+        }
+      } else {
+        setSubmissions({});
+        setDraftAnswers({});
+        setPhotoUrls({});
+      }
+
+      if (!cancelled) setLoading(false);
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [topic.id, profile?.id]);
+
+  async function submitAnswer(taskId: string, answerText: string, photoPath?: string | null) {
+    if (!profile) {
+      alert('Войди в аккаунт, чтобы решать и отправлять домашние задания.');
+      return;
+    }
+
+    setBusyTaskId(taskId);
+    try {
+      const res = await fetch('/api/homework/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId, answerText, photoPath }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.error || 'Ошибка проверки ответа');
+        return;
+      }
+
+      const sub = data.submission as Submission;
+      setSubmissions((prev) => ({ ...prev, [taskId]: sub }));
+      setDraftAnswers((prev) => ({ ...prev, [taskId]: sub.answer_text || '' }));
+      if (data.hint) {
+        setHints((prev) => ({ ...prev, [taskId]: data.hint }));
+      } else {
+        setHints((prev) => {
+          const next = { ...prev };
+          delete next[taskId];
+          return next;
+        });
+      }
+    } finally {
+      setBusyTaskId(null);
+    }
+  }
+
+  async function handlePhotoUpload(taskId: string, file: File) {
+    if (!profile) {
+      alert('Войди в аккаунт, чтобы прикрепить фото тетради.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Максимальный размер фото — 5 МБ.');
+      return;
+    }
+
+    setBusyTaskId(taskId);
+    const ext = file.name.split('.').pop() || 'jpg';
+    const path = `${profile.id}/${taskId}_${Date.now()}.${ext}`;
+
+    const { error: upErr } = await supabase.storage
+      .from('student-submissions')
+      .upload(path, file);
+
+    if (upErr) {
+      alert('Ошибка загрузки фото: ' + upErr.message);
+      setBusyTaskId(null);
+      return;
+    }
+
+    const { data: signed } = await supabase.storage
+      .from('student-submissions')
+      .createSignedUrl(path, 3600);
+    if (signed?.signedUrl) {
+      setPhotoUrls((prev) => ({ ...prev, [taskId]: signed.signedUrl }));
+    }
+
+    await submitAnswer(taskId, draftAnswers[taskId] || '', path);
+  }
+
+  async function handleCreateTask(e: React.FormEvent) {
+    e.preventDefault();
+    if (!questionMd.trim()) return;
+
+    const options =
+      hwType === 'test'
+        ? optionsText
+            .split(';')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
+
+    if (hwType === 'test' && options.length < 2) {
+      alert('Для теста укажите минимум 2 варианта ответа через точку с запятой (;)');
+      return;
+    }
+    if (hwType !== 'open' && !correctAnswer.trim()) {
+      alert('Укажите правильный ответ для автопроверки.');
+      return;
+    }
+
+    setCreating(true);
+    const nextOrder = tasks.length
+      ? Math.max(...tasks.map((t) => t.order_index)) + 1
+      : 1;
+
+    const { data: created, error } = await supabase
+      .from('homework_tasks')
+      .insert({
+        topic_id: topic.id,
+        order_index: nextOrder,
+        type: hwType,
+        difficulty,
+        question_md: questionMd.trim(),
+        options,
+        points: Math.max(1, points),
+      })
+      .select()
+      .single();
+
+    if (error || !created) {
+      alert('Ошибка создания задания: ' + error?.message);
+      setCreating(false);
+      return;
+    }
+
+    if (hwType !== 'open') {
+      const { error: keyErr } = await supabase.from('homework_answer_keys').insert({
+        task_id: created.id,
+        correct_answer: correctAnswer.trim(),
+        solution_hint: solutionHint.trim(),
+      });
+      if (keyErr) {
+        alert('Задание создано, но ключ ответа не сохранился: ' + keyErr.message);
+      }
+    }
+
+    setTasks((prev) => [...prev, created as HomeworkTask]);
+    setQuestionMd('');
+    setOptionsText('');
+    setCorrectAnswer('');
+    setSolutionHint('');
+    setCreating(false);
+  }
+
+  async function handleDeleteTask(taskId: string) {
+    if (!confirm('Удалить это домашнее задание?')) return;
+    const { error } = await supabase.from('homework_tasks').delete().eq('id', taskId);
+    if (!error) {
+      setTasks((prev) => prev.filter((t) => t.id !== taskId));
+    }
+  }
+
+  const maxPoints = tasks.reduce((sum, t) => sum + t.points, 0);
+  const earnedPoints = tasks.reduce(
+    (sum, t) => sum + (submissions[t.id]?.score || 0),
+    0
+  );
+
+  if (loading) {
+    return (
+      <div className="bg-white rounded-3xl border border-slate-200 p-8 text-center text-sm text-slate-500">
+        Загрузка домашних заданий...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Шапка ДЗ */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-base sm:text-lg font-bold text-slate-900">
+            Домашние задания к уроку
+          </h3>
+          <p className="text-xs text-slate-500">
+            Тесты и краткие ответы проверяются на сервере мгновенно; к открытым задачам можно прикрепить фото тетради.
+          </p>
+        </div>
+        {tasks.length > 0 && (
+          <div className="px-4 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-bold">
+            Набрано: {earnedPoints} / {maxPoints} б.
+          </div>
+        )}
+      </div>
+
+      {/* Список заданий */}
+      {tasks.length === 0 ? (
+        <div className="bg-white rounded-3xl border border-dashed border-slate-300 p-8 text-center space-y-2">
+          <div className="text-3xl">📝</div>
+          <p className="text-sm font-bold text-slate-700">
+            Для этой темы домашнее задание ещё не назначено
+          </p>
+          <p className="text-xs text-slate-500">
+            {canEdit
+              ? 'Используй конструктор ниже, чтобы добавить тест или задачу с фото тетради.'
+              : 'Загляни во вкладку «Интерактив и игры», чтобы потренироваться!'}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {tasks.map((hw, idx) => {
+            const sub = submissions[hw.id];
+            const diff = DIFF_META[hw.difficulty] || DIFF_META.standard;
+            const busy = busyTaskId === hw.id;
+            const typeLabel =
+              hw.type === 'test'
+                ? 'Тест'
+                : hw.type === 'input'
+                  ? 'Краткий ответ'
+                  : 'Развёрнутое решение';
+
+            return (
+              <div
+                key={hw.id}
+                className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 space-y-3.5"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-800 text-xs font-bold">
+                      Задание №{idx + 1}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${diff.cls}`}>
+                      {diff.label}
+                    </span>
+                    <span className="text-[11px] font-semibold text-slate-500">
+                      {typeLabel} · {hw.points} б.
+                    </span>
+                  </div>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteTask(hw.id)}
+                      className="text-xs font-bold text-rose-500 hover:text-rose-700"
+                    >
+                      Удалить
+                    </button>
+                  )}
+                </div>
+
+                <MathMarkdown content={hw.question_md} />
+
+                {/* Тип 1: Тест */}
+                {hw.type === 'test' && (
+                  <div className="space-y-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {hw.options.map((opt) => {
+                        const chosen = sub?.answer_text === opt;
+                        let cls =
+                          'border-slate-200 bg-slate-50 hover:border-indigo-300 text-slate-700';
+                        if (chosen && sub?.status === 'checked') {
+                          cls = sub.is_correct
+                            ? 'border-emerald-500 bg-emerald-50 text-emerald-900'
+                            : 'border-rose-500 bg-rose-50 text-rose-900';
+                        }
+                        return (
+                          <button
+                            key={opt}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => submitAnswer(hw.id, opt)}
+                            className={`text-left px-4 py-3 rounded-2xl border-2 text-xs sm:text-sm font-semibold transition ${cls}`}
+                          >
+                            {opt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {sub?.status === 'checked' && (
+                      <div
+                        className={`text-xs font-bold ${
+                          sub.is_correct ? 'text-emerald-600' : 'text-rose-600'
+                        }`}
+                      >
+                        {sub.is_correct
+                          ? `✓ Верно! Начислено ${sub.score} б.`
+                          : '✗ Неверно. Попробуй другой вариант!'}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Тип 2: Ввод числа / дроби */}
+                {hw.type === 'input' && (
+                  <div className="space-y-2.5">
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        submitAnswer(hw.id, draftAnswers[hw.id] || '');
+                      }}
+                      className="flex flex-col sm:flex-row gap-2 max-w-md"
+                    >
+                      <input
+                        type="text"
+                        value={draftAnswers[hw.id] ?? ''}
+                        onChange={(e) =>
+                          setDraftAnswers((prev) => ({
+                            ...prev,
+                            [hw.id]: e.target.value,
+                          }))
+                        }
+                        placeholder="Введи ответ (напр. 42 или 3/4)..."
+                        className="flex-1 px-4 py-2.5 text-sm font-semibold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-indigo-500"
+                      />
+                      <button
+                        type="submit"
+                        disabled={busy}
+                        className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
+                      >
+                        {busy ? 'Проверка...' : 'Проверить'}
+                      </button>
+                    </form>
+                    {sub?.status === 'checked' && (
+                      <div
+                        className={`text-xs font-bold ${
+                          sub.is_correct ? 'text-emerald-600' : 'text-rose-600'
+                        }`}
+                      >
+                        {sub.is_correct
+                          ? `✓ Верно! Начислено ${sub.score} б.`
+                          : '✗ Ответ не совпадает. Перепроверь вычисления и попробуй ещё раз.'}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Подсказка после неверной попытки */}
+                {hints[hw.id] && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                    💡 <strong>Подсказка:</strong> {hints[hw.id]}
+                  </div>
+                )}
+
+                {/* Тип 3: Развёрнутое решение + фото тетради */}
+                {hw.type === 'open' && (
+                  <div className="space-y-3">
+                    <textarea
+                      rows={3}
+                      value={draftAnswers[hw.id] ?? ''}
+                      onChange={(e) =>
+                        setDraftAnswers((prev) => ({
+                          ...prev,
+                          [hw.id]: e.target.value,
+                        }))
+                      }
+                      placeholder="Напиши ход решения здесь (или прикрепи фото тетради)..."
+                      className="w-full p-3.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500"
+                    />
+
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <label className="cursor-pointer inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition">
+                        📷 {busy ? 'Загрузка...' : 'Прикрепить фото тетради'}
+                        <input
+                          type="file"
+                          accept="image/*"
+                          disabled={busy}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) handlePhotoUpload(hw.id, f);
+                            e.target.value = '';
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => submitAnswer(hw.id, draftAnswers[hw.id] || '')}
+                        className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
+                      >
+                        {sub ? 'Обновить решение' : 'Отправить учителю'}
+                      </button>
+                    </div>
+
+                    {photoUrls[hw.id] && (
+                      <div className="pt-1">
+                        <p className="text-[11px] font-semibold text-slate-500 mb-1">
+                          Прикреплённое фото тетради:
+                        </p>
+                        <a href={photoUrls[hw.id]} target="_blank" rel="noopener noreferrer">
+                          <img
+                            src={photoUrls[hw.id]}
+                            alt="Фото решения"
+                            className="max-h-56 rounded-2xl border border-slate-200 shadow-xs"
+                          />
+                        </a>
+                      </div>
+                    )}
+
+                    {sub?.status === 'pending_review' && (
+                      <div className="p-3 rounded-xl bg-sky-50 border border-sky-200 text-xs font-semibold text-sky-800">
+                        ⏳ Решение отправлено и ожидает проверки учителя.
+                      </div>
+                    )}
+
+                    {sub?.status === 'graded' && (
+                      <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 space-y-1">
+                        <div className="font-bold">
+                          ✓ Проверено учителем: {sub.score} / {hw.points} б.
+                        </div>
+                        {sub.teacher_comment && (
+                          <div>
+                            <strong>Комментарий:</strong> {sub.teacher_comment}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Конструктор нового задания (только для учителя) */}
+      {canEdit && (
+        <form
+          onSubmit={handleCreateTask}
+          className="bg-white rounded-3xl border-2 border-indigo-200 shadow-xs p-5 sm:p-6 space-y-4"
+        >
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm sm:text-base font-bold text-indigo-900">
+              🛠️ Конструктор нового задания
+            </h4>
+            <span className="text-xs font-semibold text-indigo-600">
+              Поддерживает формулы $LaTeX$
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+            <select
+              value={hwType}
+              onChange={(e) => setHwType(e.target.value as typeof hwType)}
+              className="sm:col-span-2 px-3.5 py-2.5 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
+            >
+              <option value="test">Тест с выбором варианта (автопроверка)</option>
+              <option value="input">Краткий ответ / число (автопроверка)</option>
+              <option value="open">Развёрнутая задача (текст + фото тетради)</option>
+            </select>
+
+            <select
+              value={difficulty}
+              onChange={(e) => setDifficulty(e.target.value as typeof difficulty)}
+              className="px-3.5 py-2.5 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
+            >
+              <option value="base">Уровень: База</option>
+              <option value="standard">Уровень: Стандарт</option>
+              <option value="pro">Уровень: Профи</option>
+            </select>
+
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={points}
+              onChange={(e) => setPoints(Number(e.target.value))}
+              placeholder="Баллы"
+              className="px-3.5 py-2.5 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
+            />
+          </div>
+
+          <textarea
+            rows={2}
+            required
+            value={questionMd}
+            onChange={(e) => setQuestionMd(e.target.value)}
+            placeholder="Условие задачи (можно с формулами, например: Найдите $\frac{3}{4}$ от 60)"
+            className="w-full p-3.5 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
+          />
+
+          {hwType === 'test' && (
+            <input
+              type="text"
+              required
+              value={optionsText}
+              onChange={(e) => setOptionsText(e.target.value)}
+              placeholder="Варианты через точку с запятой (например: 15; 30; 45; 60)"
+              className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+            />
+          )}
+
+          {hwType !== 'open' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input
+                type="text"
+                required
+                value={correctAnswer}
+                onChange={(e) => setCorrectAnswer(e.target.value)}
+                placeholder="Правильный ответ (хранится закрыто на сервере)"
+                className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+              />
+              <input
+                type="text"
+                value={solutionHint}
+                onChange={(e) => setSolutionHint(e.target.value)}
+                placeholder="Подсказка при ошибке (необязательно)"
+                className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+              />
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={creating}
+            className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs sm:text-sm font-bold shadow-xs transition"
+          >
+            {creating ? 'Сохраняем...' : '+ Добавить домашнее задание'}
+          </button>
+        </form>
+      )}
+    </div>
+  );
+}
