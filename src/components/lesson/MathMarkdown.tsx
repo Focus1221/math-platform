@@ -7,9 +7,31 @@ import rehypeKatex from 'rehype-katex';
 interface Props {
   content: string;
   large?: boolean;
+  inline?: boolean;
 }
 
-export default function MathMarkdown({ content, large = false }: Props) {
+export default function MathMarkdown({
+  content,
+  large = false,
+  inline = false,
+}: Props) {
+  if (inline) {
+    return (
+      <span className="inline leading-snug">
+        <ReactMarkdown
+          remarkPlugins={[remarkMath]}
+          rehypePlugins={[rehypeKatex]}
+          components={{
+            p: ({ children }) => <span>{children}</span>,
+            strong: ({ children }) => <strong className="font-bold">{children}</strong>,
+          }}
+        >
+          {content || ''}
+        </ReactMarkdown>
+      </span>
+    );
+  }
+
   return (
     <div
       className={`space-y-2 text-slate-700 leading-relaxed ${

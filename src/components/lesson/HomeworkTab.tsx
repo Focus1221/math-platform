@@ -1,9 +1,10 @@
 'use client';
-import { playSound } from '@/lib/audio/sound';
-import { compressImageFile } from '@/lib/media/compressImage';
+
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import MathMarkdown from './MathMarkdown';
+import { playSound } from '@/lib/audio/sound';
+import { compressImageFile } from '@/lib/media/compressImage';
 import type { HomeworkTask, Profile, Submission, Topic } from '@/types/db';
 
 interface Props {
@@ -147,6 +148,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
       } else {
         playSound('success');
       }
+
       setSubmissions((prev) => ({ ...prev, [taskId]: sub }));
       setDraftAnswers((prev) => ({ ...prev, [taskId]: sub.answer_text || '' }));
       if (data.hint) {
@@ -171,6 +173,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
 
     setBusyTaskId(taskId);
     const preparedFile = await compressImageFile(file);
+
     if (preparedFile.size > 5 * 1024 * 1024) {
       alert('Фото всё ещё слишком большое (макс. 5 МБ).');
       setBusyTaskId(null);
@@ -372,11 +375,11 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
             Домашние задания к уроку
           </h3>
           <p className="text-xs text-slate-500">
-            Тесты и краткие ответы проверяются на сервере мгновенно; к открытым задачам можно прикрепить фото тетради.
+            Тесты и краткие ответы проверяются мгновенно; к открытым задачам можно прикрепить фото тетради.
           </p>
         </div>
         {tasks.length > 0 && (
-          <div className="px-4 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-bold">
+          <div className="px-4 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-bold tabular-nums">
             Набрано: {earnedPoints} / {maxPoints} б.
           </div>
         )}
@@ -392,7 +395,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
           <p className="text-xs text-slate-500">
             {canEdit
               ? 'Нажми «Сгенерировать через ИИ» ниже или добавь задание вручную.'
-              : 'Загляни во вкладку «Интерактив и игры», чтобы потренироваться!'}
+              : 'Загляни во вкладку «2. Потренироваться», чтобы попрактиковаться!'}
           </p>
         </div>
       ) : (
@@ -459,7 +462,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
                             onClick={() => submitAnswer(hw.id, opt)}
                             className={`text-left px-4 py-3 rounded-2xl border-2 text-xs sm:text-sm font-semibold transition ${cls}`}
                           >
-                            {opt}
+                            <MathMarkdown content={opt} inline />
                           </button>
                         );
                       })}
@@ -503,11 +506,13 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
                       <button
                         type="submit"
                         disabled={busy}
-                        className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
+                        className="btn-tactile px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
                       >
                         {busy ? 'Проверка...' : 'Проверить'}
                       </button>
                     </form>
+
+                    {/* Быстрая математическая клавиатура для телефона */}
                     <div className="flex flex-wrap items-center gap-1.5">
                       {(['/', ',', '-'] as const).map((sym) => (
                         <button
@@ -540,6 +545,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
                         ⌫
                       </button>
                     </div>
+
                     {sub?.status === 'checked' && (
                       <div
                         className={`text-xs font-bold ${
@@ -578,7 +584,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
 
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <label className="cursor-pointer inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition">
-                        📷 {busy ? 'Загрузка...' : 'Прикрепить фото тетради'}
+                        📷 {busy ? 'Сжимаем и загружаем...' : 'Прикрепить фото тетради'}
                         <input
                           type="file"
                           accept="image/*"
@@ -596,7 +602,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
                         type="button"
                         disabled={busy}
                         onClick={() => submitAnswer(hw.id, draftAnswers[hw.id] || '')}
-                        className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
+                        className="btn-tactile px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
                       >
                         {sub ? 'Обновить решение' : 'Отправить учителю'}
                       </button>
@@ -683,7 +689,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
               type="button"
               disabled={aiLoading}
               onClick={handleGenerateAi}
-              className="px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:opacity-60 text-white text-xs sm:text-sm font-bold shadow-xs transition shrink-0"
+              className="btn-tactile px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-700 border-violet-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold shadow-xs transition shrink-0"
             >
               {aiLoading ? 'Генерация...' : `✨ Сгенерировать (${aiCount})`}
             </button>
@@ -713,7 +719,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
                     type="button"
                     disabled={savingDrafts}
                     onClick={handleSaveAiDrafts}
-                    className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white text-xs font-bold transition"
+                    className="btn-tactile px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 disabled:opacity-60 text-white text-xs font-bold transition"
                   >
                     {savingDrafts ? 'Сохранение...' : `💾 Сохранить все (${aiDrafts.length})`}
                   </button>
@@ -756,7 +762,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
                     <div className="text-[10px] font-bold uppercase text-slate-400 mb-1">
                       Как увидит ученик:
                     </div>
-                    <MathMarkdown content="{draft.question_md}"/>
+                    <MathMarkdown content={draft.question_md} />
                   </div>
 
                   {draft.type === 'test' && (
@@ -891,7 +897,7 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
           <button
             type="submit"
             disabled={creating}
-            className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs sm:text-sm font-bold shadow-xs transition"
+            className="btn-tactile px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold shadow-xs transition"
           >
             {creating ? 'Сохраняем...' : '+ Добавить домашнее задание'}
           </button>

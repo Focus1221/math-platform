@@ -42,11 +42,18 @@ function resolveInitialSim(raw?: string): SimId {
 interface Props {
   profile: Profile | null;
   initialSim?: string;
+  initialSolved?: number;
 }
 
-export default function SimulatorsLabClient({ profile, initialSim }: Props) {
-  const [activeSim, setActiveSim] = useState<SimId>(() => resolveInitialSim(initialSim));
-  const [solved, setSolved] = useState(0);
+export default function SimulatorsLabClient({
+  profile,
+  initialSim,
+  initialSolved = 0,
+}: Props) {
+  const [activeSim, setActiveSim] = useState<SimId>(() =>
+    resolveInitialSim(initialSim)
+  );
+  const [solved, setSolved] = useState(initialSolved);
   const [streak, setStreak] = useState(0);
   const [milestoneBanner, setMilestoneBanner] = useState('');
 
@@ -68,6 +75,14 @@ export default function SimulatorsLabClient({ profile, initialSim }: Props) {
       setStreak(0);
       playSound('error');
     }
+
+    if (profile) {
+      fetch('/api/simulators/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ simId: activeSim, isCorrect }),
+      }).catch(() => {});
+    }
   }
 
   return (
@@ -81,7 +96,7 @@ export default function SimulatorsLabClient({ profile, initialSim }: Props) {
               🎮 Лаборатория тренажёров
             </h1>
             <p className="text-sm text-slate-500 mt-0.5">
-              Выбери любой тренажёр и тренируйся в своём темпе — без оценок и стресса.
+              Выбери любой тренажёр и тренируйся в своём темпе без оценок и стресса.
             </p>
           </div>
 

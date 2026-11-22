@@ -2,8 +2,10 @@ import { Suspense } from 'react';
 import { connection } from 'next/server';
 import Link from 'next/link';
 import { createServerSupabase } from '@/lib/supabase/server';
+import { createAdminSupabase } from '@/lib/supabase/admin';
 import SubmissionsReviewClient, {
-  type ReviewItem,
+  type ReviewClassroom,
+  type ReviewSubmissionItem,
 } from '@/components/teacher/SubmissionsReviewClient';
 
 async function SubmissionsContent() {
@@ -17,139 +19,110 @@ async function SubmissionsContent() {
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl border border-slate-200 p-8 max-w-md text-center space-y-3">
-          <h1 className="text-lg font-extrabold text-slate-900">Нужен вход в аккаунт</h1>
-          <p className="text-xs text-slate-500">Сессия не найдена. Войди под аккаунтом учителя.</p>
-          <Link
-            href="/login"
-            className="inline-block px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold"
-          >
-            Перейти ко входу
-          </Link>
-        </div>
+        <Link
+          href="/login"
+          className="px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-xs font-bold"
+        >
+          Войти в аккаунт учителя
+        </Link>
       </div>
     );
   }
 
-  const { data: profile, error: profErr } = await supabase
+  const admin = createAdminSupabase();
+  const { data: me } = await admin
     .from('profiles')
-    .select('role, full_name')
+    .select('role')
     .eq('id', user.id)
     .single();
 
-  if (profErr || profile?.role !== 'teacher') {
+  if (me?.role !== 'teacher') {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl border border-rose-200 p-8 max-w-md text-center space-y-3">
-          <h1 className="text-lg font-extrabold text-slate-900">Нет прав учителя</h1>
-          <p className="text-xs text-slate-600">
-            Текущая роль: <strong>{profile?.role || 'не определена'}</strong>
-            {profErr ? ` (${profErr.message})` : ''}
-          </p>
-          <Link
-            href="/courses"
-            className="inline-block px-5 py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold"
-          >
-            ← Вернуться к курсам
-          </Link>
+        <div className="bg-white rounded-3xl border border-rose-200 p-8 text-center text-sm font-bold">
+          Доступ только для учителя
         </div>
       </div>
     );
   }
 
-  const { data: rows, error: rowsErr } = await supabase
-    .from('submissions')
-    .select(
-      `
-      id,
-      answer_text,
-      photo_path,
-      score,
-      status,
-      teacher_comment,
-      updated_at,
-      profiles ( full_name ),
-      homework_tasks (
-        type,
-        question_md,
-        points,
-        topics (
-          title,
-          courses ( title )
-        )
+  const [
+    { data: classroomsData },
+    { data: profilesData },
+    { data: topicsData },
+    { data: tasksData },
+    { data: subsData },
+  ] = await Promise.all([
+    admin.from('classrooms').select('id, name').order('name'),
+    admin.from('profiles').select('id, full_name, classroom_id'),
+    admin.from('topics').select('id, title, order_index'),
+    admin.from('homework_tasks').select('id, topic_id, question_md, points, type'),
+    admin
+      .from('submissions')
+      .select(
+        'id, student_id, task_id, answer_text, photo_path, status, score, teacher_comment, updated_at'
       )
-    `
-    )
-    .order('updated_at', { ascending: false })
-    .limit(100);
+      .in('status', ['pending_review', 'graded'])
+      .order('updated_at', { ascending: false })
+      .limit(150),
+  ]);
 
-  if (rowsErr) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <div className="bg-white rounded-3xl border border-rose-200 p-8 max-w-lg space-y-3">
-          <h1 className="text-base font-extrabold text-rose-700">Ошибка загрузки журнала ДЗ</h1>
-          <pre className="text-xs bg-rose-50 p-3 rounded-xl overflow-x-auto text-rose-900">
-            {rowsErr.message}
-          </pre>
-          <Link
-            href="/courses"
-            className="inline-block px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold"
-          >
-            ← Вернуться к курсам
-          </Link>
-        </div>
-      </div>
-    );
-  }
+  const classMap = new Map(
+    (classroomsData || []).map((c) => [c.id, c.name])
+  );
+  const profileMap = new Map(
+    (profilesData || []).map((p) => [p.id, p])
+  );
+  const topicMap = new Map(
+    (topicsData || []).map((t) => [t.id, t])
+  );
+  const taskMap = new Map(
+    (tasksData || []).map((t) => [t.id, t])
+  );
 
-  const items: ReviewItem[] = [];
+  const items: ReviewSubmissionItem[] = [];
 
-  for (const r of (rows as Record<string, unknown>[]) || []) {
-    const rawProf = r.profiles;
-    const prof = (Array.isArray(rawProf) ? rawProf[0] : rawProf) as {
-      full_name?: string;
-    } | null;
-
-    const rawTask = r.homework_tasks;
-    const task = (Array.isArray(rawTask) ? rawTask[0] : rawTask) as {
-      type?: 'test' | 'input' | 'open';
-      question_md?: string;
-      points?: number;
-      topics?:
-        | { title?: string; courses?: { title?: string } | { title?: string }[] | null }
-        | { title?: string; courses?: { title?: string } | { title?: string }[] | null }[]
-        | null;
-    } | null;
-
-    const topic = Array.isArray(task?.topics) ? task?.topics[0] : task?.topics;
-    const course = Array.isArray(topic?.courses) ? topic?.courses[0] : topic?.courses;
+  for (const sub of subsData || []) {
+    const task = taskMap.get(sub.task_id);
+    if (!task) continue;
+    const topic = topicMap.get(task.topic_id);
+    const prof = profileMap.get(sub.student_id);
 
     let photoUrl: string | null = null;
-    if (typeof r.photo_path === 'string' && r.photo_path) {
-      const { data: signed } = await supabase.storage
+    if (sub.photo_path) {
+      const { data: signed } = await admin.storage
         .from('student-submissions')
-        .createSignedUrl(r.photo_path, 3600);
+        .createSignedUrl(sub.photo_path, 3600);
       photoUrl = signed?.signedUrl || null;
     }
 
     items.push({
-      id: String(r.id),
+      id: sub.id,
+      studentId: sub.student_id,
       studentName: prof?.full_name || 'Ученик',
-      courseTitle: course?.title || 'Курс',
+      classroomId: prof?.classroom_id || null,
+      classroomName: prof?.classroom_id
+        ? classMap.get(prof.classroom_id) || null
+        : null,
       topicTitle: topic?.title || 'Урок',
-      questionMd: task?.question_md || '',
-      taskType: task?.type || 'open',
-      maxPoints: Number(task?.points || 2),
-      answerText: String(r.answer_text || ''),
+      topicOrder: topic?.order_index || 0,
+      questionMd: task.question_md || '',
+      maxPoints: Number(task.points || 2),
+      answerText: sub.answer_text || '',
       photoUrl,
-      score: Number(r.score || 0),
-      status: (r.status as ReviewItem['status']) || 'pending_review',
-      teacherComment: String(r.teacher_comment || ''),
-      updatedAt: String(r.updated_at || ''),
+      status: sub.status,
+      score: Number(sub.score || 0),
+      teacherComment: sub.teacher_comment || '',
+      updatedAt: sub.updated_at || new Date().toISOString(),
     });
   }
 
-  return <SubmissionsReviewClient initialItems={items} />;
+  return (
+    <SubmissionsReviewClient
+      classrooms={(classroomsData as ReviewClassroom[]) || []}
+      initialItems={items}
+    />
+  );
 }
 
 export default function TeacherSubmissionsPage() {
@@ -157,7 +130,7 @@ export default function TeacherSubmissionsPage() {
     <Suspense
       fallback={
         <div className="min-h-screen flex items-center justify-center text-sm font-semibold text-slate-500">
-          Загрузка журнала ДЗ...
+          Загрузка работ на проверку...
         </div>
       }
     >

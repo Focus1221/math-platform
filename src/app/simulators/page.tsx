@@ -18,16 +18,30 @@ async function SimulatorsContent({
   } = await supabase.auth.getUser();
 
   let profile: Profile | null = null;
+  let initialSolved = 0;
+
   if (user) {
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-    profile = data as Profile | null;
+    const [{ data: prof }, { data: progRows }] = await Promise.all([
+      supabase.from('profiles').select('*').eq('id', user.id).single(),
+      supabase
+        .from('topic_progress')
+        .select('sim_correct_count')
+        .eq('student_id', user.id),
+    ]);
+
+    profile = prof as Profile | null;
+    for (const row of progRows || []) {
+      initialSolved += Number(row.sim_correct_count || 0);
+    }
   }
 
-  return <SimulatorsLabClient profile={profile} initialSim={sim} />;
+  return (
+    <SimulatorsLabClient
+      profile={profile}
+      initialSim={sim}
+      initialSolved={initialSolved}
+    />
+  );
 }
 
 export default function SimulatorsPage({

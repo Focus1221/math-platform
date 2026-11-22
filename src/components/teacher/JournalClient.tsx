@@ -289,6 +289,59 @@ export default function JournalClient({
     }
   }
 
+  async function handleRenameStudent(student: StudentRow) {
+    const nextName = prompt('Новое имя и фамилия ученика:', student.full_name);
+    if (!nextName || !nextName.trim() || nextName.trim() === student.full_name) {
+      return;
+    }
+
+    setBusyStudentId(student.id);
+    try {
+      const res = await fetch('/api/teacher/students', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId: student.id, fullName: nextName.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Не удалось переименовать ученика');
+        return;
+      }
+      setStudents((prev) =>
+        prev.map((s) =>
+          s.id === student.id ? { ...s, full_name: data.fullName } : s
+        )
+      );
+    } finally {
+      setBusyStudentId(null);
+    }
+  }
+
+  async function handleDeleteStudent(student: StudentRow) {
+    if (
+      !confirm(
+        `Удалить аккаунт ученика «${student.full_name}» вместе со всеми его баллами и работами?`
+      )
+    ) {
+      return;
+    }
+
+    setBusyStudentId(student.id);
+    try {
+      const res = await fetch(`/api/teacher/students?id=${student.id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Не удалось удалить ученика');
+        return;
+      }
+      setStudents((prev) => prev.filter((s) => s.id !== student.id));
+    } finally {
+      setBusyStudentId(null);
+    }
+  }
+
   function exportCsv() {
     const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
     const headers = [
@@ -805,7 +858,7 @@ export default function JournalClient({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                           <select
                             disabled={busyStudentId === st.id}
                             value={st.classroom_id || ''}
@@ -827,6 +880,26 @@ export default function JournalClient({
                             className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition whitespace-nowrap"
                           >
                             🔑 {st.login_username ? 'Новый PIN' : 'Сбросить пароль'}
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={busyStudentId === st.id}
+                            onClick={() => handleRenameStudent(st)}
+                            title="Переименовать ученика"
+                            className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 text-xs font-bold transition"
+                          >
+                            ✏️
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={busyStudentId === st.id}
+                            onClick={() => handleDeleteStudent(st)}
+                            title="Удалить аккаунт ученика"
+                            className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold transition"
+                          >
+                            🗑️
                           </button>
                         </div>
                       </div>
