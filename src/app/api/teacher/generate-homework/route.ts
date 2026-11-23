@@ -12,11 +12,14 @@ interface DraftGenTask {
   solution_hint: string;
 }
 
+export const maxDuration = 60;
+
 const MODELS = [
   'gemini-4-hydrogen',
-  'gemini-flash-latest',
   'gemini-3.8-flash',
-  'gemini-flash-lite-latest',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
 ];
 
 interface GeminiPart {
@@ -200,8 +203,9 @@ ${
     } | null = null;
     let lastStatus = 502;
     let lastReason = 'Нет ответа от Gemini';
+const attempts: string[] = [];
 
-   for (const model of MODELS) {
+    for (const model of MODELS) {
       const endpoint =
         'https://generativelanguage.googleapis.com/v1beta/models/' +
         encodeURIComponent(model) +
@@ -230,7 +234,7 @@ ${
 
       lastStatus = res.status;
       const errText = await res.text();
-      console.error(`Gemini homework error (${model}, ${res.status}):`, errText);
+      console.error(`Gemini error (${model}, ${res.status}):`, errText);
 
       try {
         const errJson = JSON.parse(errText);
@@ -239,14 +243,22 @@ ${
         lastReason = errText.slice(0, 200);
       }
 
+      attempts.push(`${model}:${res.status}`);
+
       if (res.status === 400 && lastReason.toLowerCase().includes('api key')) {
         break;
+      }
+
+      if (res.status === 503 || res.status === 429) {
+        await new Promise((r) => setTimeout(r, 400));
       }
     }
 
     if (!geminiData) {
       return NextResponse.json(
-        { error: `Ошибка Gemini (${lastStatus}): ${lastReason}` },
+        {
+          error: `Ошибка Gemini (${lastStatus}) [${attempts.join(', ')}]: ${lastReason}`,
+        },
         { status: 502 }
       );
     }
