@@ -205,21 +205,23 @@ export default function TheoryTab({
               </button>
             </div>
           </div>
-        ) : (
-        <div className="space-y-4">
-          <LessonSlidesPlayer
-            topic={topic}
-            boardMode={boardMode}
-            isTeacherView={canEdit}
-          />
-          {canEdit && (
-            <SlideStudioPanel
+       ) : (
+          <div className="space-y-4">
+            <LessonSlidesPlayer
               topic={topic}
-              onTopicUpdated={onTopicUpdated}
+              boardMode={boardMode}
+              isTeacherView={canEdit}
             />
-          )}
-        </div>
-      )}
+            {canEdit && (
+              <SlideStudioPanel
+                topic={topic}
+                onTopicUpdated={onTopicUpdated}
+              />
+            )}
+          </div>
+        )}
+      </div>
+
 
       {/* Правая колонка: Файлы и презентации */}
       {!hideEmptyMaterials && (
