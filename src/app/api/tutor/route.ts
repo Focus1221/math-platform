@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
-import { GoogleGenAI } from '@google/genai';
 import { createServerSupabase } from '@/lib/supabase/server';
+
+export const maxDuration = 60;
 
 type TutorMode = 'socratic' | 'error' | 'analog' | 'visual';
 
@@ -27,6 +28,35 @@ const MODE_INSTRUCTIONS: Record<TutorMode, { label: string; prompt: string }> = 
   },
 };
 
+const MODELS = [
+  'gemini-4-hydrogen',
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+];
+
+interface GeminiPart {
+  text?: string;
+  thought?: boolean;
+}
+
+function extractReplyText(data: {
+  candidates?: { content?: { parts?: GeminiPart[] } }[];
+}): string {
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  const finalParts = parts.filter(
+    (p) => !p.thought && typeof p.text === 'string' && p.text.trim().length > 0
+  );
+  if (finalParts.length > 0) {
+    return finalParts
+      .map((p) => p.text)
+      .join('\n')
+      .trim();
+  }
+  return (parts[parts.length - 1]?.text || '').trim();
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createServerSupabase();
@@ -48,12 +78,18 @@ export async function POST(request: Request) {
     const mode = body.mode as TutorMode;
 
     if (!topicId || !MODE_INSTRUCTIONS[mode]) {
-      return NextResponse.json({ error: 'Некорректные параметры запроса.' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Некорректные параметры запроса.' },
+        { status: 400 }
+      );
     }
 
     if (problem.length < 3 || attempt.length < 3) {
       return NextResponse.json(
-        { error: 'Сначала напиши условие задачи и свою самостоятельную попытку решения.' },
+        {
+          error:
+            'Сначала напиши условие задачи и свою самостоятельную попытку решения.',
+        },
         { status: 400 }
       );
     }
@@ -79,7 +115,10 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!process.env.GEMINI_API_KEY) {
+    const apiKey = (process.env.GEMINI_API_KEY || '')
+      .trim()
+      .replace(/^["']|["']$/g, '');
+    if (!apiKey) {
       return NextResponse.json(
         { error: 'На сервере не настроен GEMINI_API_KEY.' },
         { status: 500 }
@@ -109,19 +148,84 @@ export async function POST(request: Request) {
 Выбранная функция помощи: ${chosen.label}.
 Инструкция: ${chosen.prompt}`;
 
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-4-hydrogen',
-      contents: userPrompt,
-      config: {
-        systemInstruction: systemPrompt,
-        temperature: 0.6,
-      },
-    });
+    let geminiData: {
+      candidates?: { content?: { parts?: GeminiPart[] } }[];
+    } | null = null;
+    let lastStatus = 502;
+    let lastReason = 'Нет ответа от Gemini';
+    const attempts: string[] = [];
 
-    const reply = response.text?.trim();
+    for (const model of MODELS) {
+      const endpoint =
+        'https://generativelanguage.googleapis.com/v1beta/models/' +
+        encodeURIComponent(model) +
+        ':generateContent';
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [{ text: systemPrompt }],
+          },
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: userPrompt }],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.6,
+            maxOutputTokens: 2048,
+          },
+        }),
+      });
+
+      if (res.ok) {
+        geminiData = await res.json();
+        break;
+      }
+
+      lastStatus = res.status;
+      const errText = await res.text();
+      console.error(`Tutor Gemini error (${model}, ${res.status}):`, errText);
+
+      try {
+        const errJson = JSON.parse(errText);
+        lastReason = errJson?.error?.message || errText.slice(0, 180);
+      } catch {
+        lastReason = errText.slice(0, 180);
+      }
+
+      attempts.push(`${model}:${res.status}`);
+
+      if (res.status === 400 && lastReason.toLowerCase().includes('api key')) {
+        break;
+      }
+
+      if (res.status === 503 || res.status === 429) {
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+
+    if (!geminiData) {
+      return NextResponse.json(
+        {
+          error: `Ошибка ИИ-тьютора (${lastStatus}) [${attempts.join(', ')}]: ${lastReason}`,
+        },
+        { status: 502 }
+      );
+    }
+
+    const reply = extractReplyText(geminiData);
     if (!reply) {
-      return NextResponse.json({ error: 'Модель вернула пустой ответ.' }, { status: 502 });
+      return NextResponse.json(
+        { error: 'Модель вернула пустой ответ. Попробуй ещё раз.' },
+        { status: 502 }
+      );
     }
 
     return NextResponse.json({ reply, modeLabel: chosen.label });
