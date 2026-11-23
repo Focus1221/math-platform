@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 
+export const maxDuration = 60;
+
 interface DraftGenTask {
   type: 'test' | 'input' | 'open';
   difficulty: 'base' | 'standard' | 'pro';
@@ -12,8 +14,6 @@ interface DraftGenTask {
   solution_hint: string;
 }
 
-export const maxDuration = 60;
-
 const MODELS = [
   'gemini-4-hydrogen',
   'gemini-3.8-flash',
@@ -21,6 +21,37 @@ const MODELS = [
   'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
 ];
+
+const HOMEWORK_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    tasks: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          type: { type: 'STRING', enum: ['test', 'input', 'open'] },
+          difficulty: { type: 'STRING', enum: ['base', 'standard', 'pro'] },
+          points: { type: 'INTEGER' },
+          question_md: { type: 'STRING' },
+          options: { type: 'ARRAY', items: { type: 'STRING' } },
+          correct_answer: { type: 'STRING' },
+          solution_hint: { type: 'STRING' },
+        },
+        required: [
+          'type',
+          'difficulty',
+          'points',
+          'question_md',
+          'options',
+          'correct_answer',
+          'solution_hint',
+        ],
+      },
+    },
+  },
+  required: ['tasks'],
+};
 
 interface GeminiPart {
   text?: string;
@@ -40,26 +71,102 @@ function extractAnswerText(data: {
   return parts[parts.length - 1]?.text || '';
 }
 
-function safeParseJson(rawText: string): unknown {
+function tryParseJson(chunk: string): unknown | null {
+  try {
+    return JSON.parse(chunk);
+  } catch {
+    try {
+      const repaired = chunk.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+      return JSON.parse(repaired);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function extractJsonValues(rawText: string): unknown[] {
   const cleaned = rawText
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
+    .replace(/```json/gi, '')
+    .replace(/```/g, '')
     .trim();
 
-  const firstBrace = cleaned.indexOf('{');
-  const lastBrace = cleaned.lastIndexOf('}');
-  const slice =
-    firstBrace !== -1 && lastBrace > firstBrace
-      ? cleaned.slice(firstBrace, lastBrace + 1)
-      : cleaned;
+  const direct = tryParseJson(cleaned);
+  if (direct !== null) return [direct];
 
-  try {
-    return JSON.parse(slice);
-  } catch {
-    const repaired = slice.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
-    return JSON.parse(repaired);
+  const values: unknown[] = [];
+  let i = 0;
+
+  while (i < cleaned.length) {
+    const ch = cleaned[i];
+    if (ch !== '{' && ch !== '[') {
+      i++;
+      continue;
+    }
+
+    const openChar = ch;
+    const closeChar = ch === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+
+    for (let j = i; j < cleaned.length; j++) {
+      const c = cleaned[j];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (c === '\\') {
+          escaped = true;
+        } else if (c === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (c === '"') {
+        inString = true;
+      } else if (c === openChar) {
+        depth++;
+      } else if (c === closeChar) {
+        depth--;
+        if (depth === 0) {
+          end = j;
+          break;
+        }
+      }
+    }
+
+    if (end !== -1) {
+      const slice = cleaned.slice(i, end + 1);
+      const parsed = tryParseJson(slice);
+      if (parsed !== null) {
+        values.push(parsed);
+        i = end + 1;
+        continue;
+      }
+    }
+
+    i++;
   }
+
+  return values;
+}
+
+function collectRawTasks(values: unknown[]): unknown[] {
+  const list: unknown[] = [];
+  for (const val of values) {
+    if (Array.isArray(val)) {
+      list.push(...val);
+    } else if (val && typeof val === 'object') {
+      const obj = val as Record<string, unknown>;
+      if (Array.isArray(obj.tasks)) {
+        list.push(...obj.tasks);
+      } else if (typeof obj.question_md === 'string') {
+        list.push(obj);
+      }
+    }
+  }
+  return list;
 }
 
 function sanitizeTasks(raw: unknown): DraftGenTask[] {
@@ -89,7 +196,11 @@ function sanitizeTasks(raw: unknown): DraftGenTask[] {
     let correct_answer =
       type === 'open' ? '' : String(obj.correct_answer ?? '').trim();
 
-    if (type === 'test' && options.length >= 2 && !options.includes(correct_answer)) {
+    if (
+      type === 'test' &&
+      options.length >= 2 &&
+      !options.includes(correct_answer)
+    ) {
       correct_answer = options[0];
     }
 
@@ -125,7 +236,10 @@ export async function POST(request: Request) {
     } = await supabase.auth.getUser();
 
     if (!user) {
-      return NextResponse.json({ error: 'Нужен вход в аккаунт' }, { status: 401 });
+      return NextResponse.json(
+        { error: 'Нужен вход в аккаунт' },
+        { status: 401 }
+      );
     }
 
     const admin = createAdminSupabase();
@@ -136,7 +250,10 @@ export async function POST(request: Request) {
       .single();
 
     if (me?.role !== 'teacher') {
-      return NextResponse.json({ error: 'Доступ только для учителя' }, { status: 403 });
+      return NextResponse.json(
+        { error: 'Доступ только для учителя' },
+        { status: 403 }
+      );
     }
 
     const apiKey = (process.env.GEMINI_API_KEY || '')
@@ -155,7 +272,10 @@ export async function POST(request: Request) {
     const extraWish = String(body.extraWish || '').trim();
 
     if (!topicId) {
-      return NextResponse.json({ error: 'Не указан ID темы' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Не указан ID темы' },
+        { status: 400 }
+      );
     }
 
     const { data: topic } = await admin
@@ -189,21 +309,19 @@ ${
 }
 
 Правила формата:
-- Формулы пиши в LaTeX внутри одинарных долларов (в JSON экранируй обратный слэш как \\\\).
-- Для type: "test" обязательно укажи 4 варианта в "options", и "correct_answer" должен ТОЧНО совпадать с одним из элементов "options".
+- Формулы пиши в LaTeX внутри одинарных долларов, например $\\frac{3}{4}$ или $25\\%$.
+- Для type: "test" укажи 4 варианта в "options", и "correct_answer" должен точно совпадать с одним из вариантов.
 - Для type: "input" правильный ответ в "correct_answer" должен быть коротким числом или дробью (например: "42", "3/4", "2,5"); в "options" передай [].
 - Для type: "open" в "options" передай [], в "correct_answer" передай "".
 - В "solution_hint" напиши короткую наводящую подсказку на случай ошибки.
-- Обязательно перепроверь арифметику каждого задания!
-
-Верни СТРОГО валидный JSON-объект вида { "tasks": [ ... ] }.`;
+- Обязательно перепроверь арифметику каждого задания!`;
 
     let geminiData: {
       candidates?: { content?: { parts?: GeminiPart[] } }[];
     } | null = null;
     let lastStatus = 502;
     let lastReason = 'Нет ответа от Gemini';
-const attempts: string[] = [];
+    const attempts: string[] = [];
 
     for (const model of MODELS) {
       const endpoint =
@@ -220,9 +338,10 @@ const attempts: string[] = [];
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 8192,
+            temperature: 0.6,
+            maxOutputTokens: 4096,
             responseMimeType: 'application/json',
+            responseSchema: HOMEWORK_SCHEMA,
           },
         }),
       });
@@ -234,7 +353,7 @@ const attempts: string[] = [];
 
       lastStatus = res.status;
       const errText = await res.text();
-      console.error(`Gemini error (${model}, ${res.status}):`, errText);
+      console.error(`Gemini homework error (${model}, ${res.status}):`, errText);
 
       try {
         const errJson = JSON.parse(errText);
@@ -264,8 +383,8 @@ const attempts: string[] = [];
     }
 
     const rawText = extractAnswerText(geminiData);
-    const parsed = safeParseJson(rawText) as { tasks?: unknown } | unknown[];
-    const tasks = sanitizeTasks(Array.isArray(parsed) ? parsed : parsed?.tasks);
+    const jsonValues = extractJsonValues(rawText);
+    const tasks = sanitizeTasks(collectRawTasks(jsonValues));
 
     if (tasks.length === 0) {
       return NextResponse.json(
