@@ -11,6 +11,7 @@ interface Props {
 function resolveEmbed(rawUrl: string): {
   mode: 'image' | 'iframe';
   embedUrl: string;
+  hint?: string;
 } {
   const url = rawUrl.trim();
   const lower = url.toLowerCase();
@@ -18,6 +19,15 @@ function resolveEmbed(rawUrl: string): {
   // Картинки
   if (/\.(png|jpe?g|webp|gif|svg)(\?|$)/i.test(lower)) {
     return { mode: 'image', embedUrl: url };
+  }
+
+  // Файлы PowerPoint, Word, Excel (из Supabase Storage или по прямой ссылке)
+  if (/\.(pptx?|docx?|xlsx?)(\?|$)/i.test(lower)) {
+    return {
+      mode: 'iframe',
+      embedUrl: `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`,
+      hint: 'Просмотр документа Office · если файл грузится долго, нажми «Открыть отдельно ↗»',
+    };
   }
 
   // YouTube (обычные ссылки, youtu.be, shorts)
@@ -31,9 +41,16 @@ function resolveEmbed(rawUrl: string): {
     };
   }
 
-  // Google Slides / Docs
+  // Google Slides / Docs / Drive
   if (lower.includes('docs.google.com/presentation/d/')) {
-    const clean = url.replace(/\/(edit|view).*$/, '/embed?start=false&loop=false');
+    const clean = url.replace(
+      /\/(edit|view).*$/,
+      '/embed?start=false&loop=false'
+    );
+    return { mode: 'iframe', embedUrl: clean };
+  }
+  if (lower.includes('docs.google.com/document/d/')) {
+    const clean = url.replace(/\/(edit|view).*$/, '/preview');
     return { mode: 'iframe', embedUrl: clean };
   }
   if (lower.includes('drive.google.com/file/d/')) {
@@ -52,7 +69,7 @@ function resolveEmbed(rawUrl: string): {
 }
 
 export default function MaterialPreviewModal({ title, url, onClose }: Props) {
-  const { mode, embedUrl } = resolveEmbed(url);
+  const { mode, embedUrl, hint } = resolveEmbed(url);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -74,7 +91,7 @@ export default function MaterialPreviewModal({ title, url, onClose }: Props) {
         <div className="px-4 sm:px-5 py-3.5 border-b border-slate-200 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[11px] font-bold uppercase text-indigo-600">
-              Встроенный просмотр
+              {hint || 'Встроенный просмотр'}
             </div>
             <h3 className="text-sm sm:text-base font-extrabold text-slate-900 truncate">
               {title}

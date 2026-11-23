@@ -137,22 +137,39 @@ export default function SlideVisualBox({ visual, large = false }: Props) {
       <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 overflow-x-auto">
         <svg viewBox="0 0 520 120" className="w-full min-w-[340px] max-w-xl mx-auto">
           {/* Луч и стрелка */}
-          <line x1={28} y1={72} x2={498} y2={72} stroke="#475569" strokeWidth={3} strokeLinecap="round" />
-          <polygon points="502,72 490,66 490,78" fill="#475569" />
+          <g className="text-slate-600">
+            <line
+              x1={28}
+              y1={72}
+              x2={498}
+              y2={72}
+              stroke="currentColor"
+              strokeWidth={3}
+              strokeLinecap="round"
+            />
+            <polygon points="502,72 490,66 490,78" fill="currentColor" />
+          </g>
 
-          {/* Штрихи */}
+          {/* Штрихи и подписи */}
           {ticks.map((val, idx) => {
             const x = toX(val);
             return (
-              <g key={idx}>
-                <line x1={x} y1={65} x2={x} y2={79} stroke="#94A3B8" strokeWidth={2} />
+              <g key={idx} className="text-slate-500">
+                <line
+                  x1={x}
+                  y1={65}
+                  x2={x}
+                  y2={79}
+                  stroke="currentColor"
+                  strokeWidth={2}
+                />
                 <text
                   x={x}
                   y={98}
                   textAnchor="middle"
                   fontSize={11}
                   fontWeight={700}
-                  fill="#64748B"
+                  fill="currentColor"
                 >
                   {val}
                 </text>
@@ -177,7 +194,7 @@ export default function SlideVisualBox({ visual, large = false }: Props) {
                   textAnchor="middle"
                   fontSize={12}
                   fontWeight={800}
-                  fill="#059669"
+                  fill="#10B981"
                 >
                   {jump.label}
                 </text>
@@ -195,7 +212,7 @@ export default function SlideVisualBox({ visual, large = false }: Props) {
                   cx={x}
                   cy={72}
                   r={hl ? 7 : 5}
-                  fill={hl ? '#4F46E5' : '#0EA5E9'}
+                  fill={hl ? '#6366F1' : '#0EA5E9'}
                   stroke="#FFFFFF"
                   strokeWidth={2.5}
                 />
@@ -205,7 +222,7 @@ export default function SlideVisualBox({ visual, large = false }: Props) {
                   textAnchor="middle"
                   fontSize={12}
                   fontWeight={800}
-                  fill={hl ? '#4338CA' : '#0369A1'}
+                  fill={hl ? '#6366F1' : '#0EA5E9'}
                 >
                   {pt.label}
                 </text>
@@ -226,7 +243,7 @@ export default function SlideVisualBox({ visual, large = false }: Props) {
             <div
               key={i}
               className={`w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-[3px] ${
-                i < pct ? 'bg-indigo-600' : 'bg-slate-100'
+                i < pct ? 'bg-indigo-600' : 'bg-slate-200'
               }`}
             />
           ))}
@@ -236,7 +253,8 @@ export default function SlideVisualBox({ visual, large = false }: Props) {
             {pct}%
           </div>
           <div className="text-xs sm:text-sm font-bold text-slate-700">
-            {pct} из 100 клеток = {String(Number((pct / 100).toFixed(2))).replace('.', ',')}
+            {pct} из 100 клеток ={' '}
+            {String(Number((pct / 100).toFixed(2))).replace('.', ',')}
           </div>
           {visual.label && (
             <div className="text-xs text-slate-500">{visual.label}</div>
@@ -259,8 +277,8 @@ export default function SlideVisualBox({ visual, large = false }: Props) {
     const ay = cy + arcR * Math.sin(-rad);
     const largeArc = deg > 180 ? 1 : 0;
     const midRad = (deg / 2) * (Math.PI / 180);
-    const lx = cx + 52 * Math.cos(-midRad);
-    const ly = cy + 52 * Math.sin(-midRad);
+    const lx = cx + 54 * Math.cos(-midRad);
+    const ly = cy + 54 * Math.sin(-midRad);
 
     const angleKind =
       deg < 90
@@ -282,10 +300,39 @@ export default function SlideVisualBox({ visual, large = false }: Props) {
             stroke="#F59E0B"
             strokeWidth={4}
           />
-          <line x1={cx} y1={cy} x2={cx + r} y2={cy} stroke="#4F46E5" strokeWidth={3.5} strokeLinecap="round" />
-          <line x1={cx} y1={cy} x2={x2} y2={y2} stroke="#4F46E5" strokeWidth={3.5} strokeLinecap="round" />
-          <circle cx={cx} cy={cy} r={5} fill="#0F172A" />
-          <text x={lx} y={ly} textAnchor="middle" fontSize={13} fontWeight={800} fill="#B45309">
+          <line
+            x1={cx}
+            y1={cy}
+            x2={cx + r}
+            y2={cy}
+            stroke="#6366F1"
+            strokeWidth={3.5}
+            strokeLinecap="round"
+          />
+          <line
+            x1={cx}
+            y1={cy}
+            x2={x2}
+            y2={y2}
+            stroke="#6366F1"
+            strokeWidth={3.5}
+            strokeLinecap="round"
+          />
+          <circle
+            cx={cx}
+            cy={cy}
+            r={5}
+            className="text-slate-800"
+            fill="currentColor"
+          />
+          <text
+            x={lx}
+            y={ly}
+            textAnchor="middle"
+            fontSize={13}
+            fontWeight={800}
+            fill="#F59E0B"
+          >
             {deg}°
           </text>
         </svg>
@@ -305,28 +352,83 @@ export default function SlideVisualBox({ visual, large = false }: Props) {
     return (
       <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4">
         <svg viewBox="0 0 420 200" className="w-full max-w-md mx-auto">
-          <circle cx={155} cy={108} r={74} fill="rgba(99, 102, 241, 0.18)" stroke="#4F46E5" strokeWidth={2.5} />
-          <circle cx={265} cy={108} r={74} fill="rgba(16, 185, 129, 0.18)" stroke="#10B981" strokeWidth={2.5} />
+          <circle
+            cx={155}
+            cy={108}
+            r={74}
+            fill="rgba(99, 102, 241, 0.22)"
+            stroke="#6366F1"
+            strokeWidth={2.5}
+          />
+          <circle
+            cx={265}
+            cy={108}
+            r={74}
+            fill="rgba(16, 185, 129, 0.22)"
+            stroke="#10B981"
+            strokeWidth={2.5}
+          />
 
-          <text x={115} y={24} textAnchor="middle" fontSize={13} fontWeight={800} fill="#4338CA">
+          <text
+            x={115}
+            y={24}
+            textAnchor="middle"
+            fontSize={13}
+            fontWeight={800}
+            fill="#6366F1"
+          >
             {visual.leftLabel}
           </text>
-          <text x={305} y={24} textAnchor="middle" fontSize={13} fontWeight={800} fill="#047857">
+          <text
+            x={305}
+            y={24}
+            textAnchor="middle"
+            fontSize={13}
+            fontWeight={800}
+            fill="#10B981"
+          >
             {visual.rightLabel}
           </text>
 
-          {(visual.leftItems || []).slice(0, 4).map((it, i) => (
-            <text key={i} x={122} y={88 + i * 20} textAnchor="middle" fontSize={12} fontWeight={700} fill="#1E293B">
-              {it}
-            </text>
-          ))}
+          <g className="text-slate-800">
+            {(visual.leftItems || []).slice(0, 4).map((it, i) => (
+              <text
+                key={i}
+                x={122}
+                y={88 + i * 20}
+                textAnchor="middle"
+                fontSize={12}
+                fontWeight={700}
+                fill="currentColor"
+              >
+                {it}
+              </text>
+            ))}
+            {(visual.rightItems || []).slice(0, 4).map((it, i) => (
+              <text
+                key={i}
+                x={298}
+                y={88 + i * 20}
+                textAnchor="middle"
+                fontSize={12}
+                fontWeight={700}
+                fill="currentColor"
+              >
+                {it}
+              </text>
+            ))}
+          </g>
+
           {(visual.bothItems || []).slice(0, 4).map((it, i) => (
-            <text key={i} x={210} y={88 + i * 20} textAnchor="middle" fontSize={12} fontWeight={800} fill="#4F46E5">
-              {it}
-            </text>
-          ))}
-          {(visual.rightItems || []).slice(0, 4).map((it, i) => (
-            <text key={i} x={298} y={88 + i * 20} textAnchor="middle" fontSize={12} fontWeight={700} fill="#1E293B">
+            <text
+              key={i}
+              x={210}
+              y={88 + i * 20}
+              textAnchor="middle"
+              fontSize={12}
+              fontWeight={800}
+              fill="#6366F1"
+            >
               {it}
             </text>
           ))}

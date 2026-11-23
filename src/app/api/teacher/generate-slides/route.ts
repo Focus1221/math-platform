@@ -3,6 +3,8 @@ import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { LessonSlide, SlideType, SlideVisual } from '@/types/db';
 
+export const maxDuration = 60;
+
 const VALID_TYPES: SlideType[] = [
   'intro',
   'concept',
@@ -12,8 +14,6 @@ const VALID_TYPES: SlideType[] = [
   'summary',
 ];
 
-export const maxDuration = 60;
-
 const MODELS = [
   'gemini-4-hydrogen',
   'gemini-3.8-flash',
@@ -21,6 +21,7 @@ const MODELS = [
   'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
 ];
+
 interface GeminiPart {
   text?: string;
   thought?: boolean;
@@ -39,27 +40,102 @@ function extractAnswerText(data: {
   return parts[parts.length - 1]?.text || '';
 }
 
-function safeParseJson(rawText: string): unknown {
+function tryParseJson(chunk: string): unknown | null {
+  try {
+    return JSON.parse(chunk);
+  } catch {
+    try {
+      const repaired = chunk.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+      return JSON.parse(repaired);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function extractJsonValues(rawText: string): unknown[] {
   const cleaned = rawText
-    .replace(/^```json\s*/i, '')
-    .replace(/^```\s*/i, '')
-    .replace(/\s*```$/i, '')
+    .replace(/```json/gi, '')
+    .replace(/```/g, '')
     .trim();
 
-  const firstBrace = cleaned.indexOf('{');
-  const lastBrace = cleaned.lastIndexOf('}');
-  const slice =
-    firstBrace !== -1 && lastBrace > firstBrace
-      ? cleaned.slice(firstBrace, lastBrace + 1)
-      : cleaned;
+  const direct = tryParseJson(cleaned);
+  if (direct !== null) return [direct];
 
-  try {
-    return JSON.parse(slice);
-  } catch {
-    // Чиним невалидные одинарные обратные слэши от LaTeX (например \%, \sqrt, \cdot)
-    const repaired = slice.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
-    return JSON.parse(repaired);
+  const values: unknown[] = [];
+  let i = 0;
+
+  while (i < cleaned.length) {
+    const ch = cleaned[i];
+    if (ch !== '{' && ch !== '[') {
+      i++;
+      continue;
+    }
+
+    const openChar = ch;
+    const closeChar = ch === '{' ? '}' : ']';
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    let end = -1;
+
+    for (let j = i; j < cleaned.length; j++) {
+      const c = cleaned[j];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (c === '\\') {
+          escaped = true;
+        } else if (c === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (c === '"') {
+        inString = true;
+      } else if (c === openChar) {
+        depth++;
+      } else if (c === closeChar) {
+        depth--;
+        if (depth === 0) {
+          end = j;
+          break;
+        }
+      }
+    }
+
+    if (end !== -1) {
+      const slice = cleaned.slice(i, end + 1);
+      const parsed = tryParseJson(slice);
+      if (parsed !== null) {
+        values.push(parsed);
+        i = end + 1;
+        continue;
+      }
+    }
+
+    i++;
   }
+
+  return values;
+}
+
+function collectRawSlides(values: unknown[]): unknown[] {
+  const list: unknown[] = [];
+  for (const val of values) {
+    if (Array.isArray(val)) {
+      list.push(...val);
+    } else if (val && typeof val === 'object') {
+      const obj = val as Record<string, unknown>;
+      if (Array.isArray(obj.slides)) {
+        list.push(...obj.slides);
+      } else if (typeof obj.title === 'string' && typeof obj.body_md === 'string') {
+        list.push(obj);
+      }
+    }
+  }
+  return list;
 }
 
 function sanitizeVisual(raw: unknown): SlideVisual | null {
@@ -310,7 +386,6 @@ export async function POST(request: Request) {
     } | null = null;
     let lastStatus = 502;
     let lastReason = 'Нет ответа от Gemini';
-
     const attempts: string[] = [];
 
     for (const model of MODELS) {
@@ -342,7 +417,7 @@ export async function POST(request: Request) {
 
       lastStatus = res.status;
       const errText = await res.text();
-      console.error(`Gemini error (${model}, ${res.status}):`, errText);
+      console.error(`Gemini slides error (${model}, ${res.status}):`, errText);
 
       try {
         const errJson = JSON.parse(errText);
@@ -372,10 +447,8 @@ export async function POST(request: Request) {
     }
 
     const rawText = extractAnswerText(geminiData);
-    const parsed = safeParseJson(rawText) as { slides?: unknown } | unknown[];
-    const slides = sanitizeSlides(
-      Array.isArray(parsed) ? parsed : parsed?.slides
-    );
+    const jsonValues = extractJsonValues(rawText);
+    const slides = sanitizeSlides(collectRawSlides(jsonValues));
 
     if (slides.length === 0) {
       return NextResponse.json(

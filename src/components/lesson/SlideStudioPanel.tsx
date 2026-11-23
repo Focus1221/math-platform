@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { playSound } from '@/lib/audio/sound';
-import type { LessonSlide, SlideType, Topic } from '@/types/db';
+import type { LessonSlide, SlideType, SlideVisual, Topic } from '@/types/db';
 
 interface Props {
   topic: Topic;
@@ -18,6 +18,58 @@ const TYPE_OPTIONS: { value: SlideType; label: string }[] = [
   { value: 'quiz', label: '🎯 Мини-проверка' },
   { value: 'summary', label: '⭐ Шпаргалка урока' },
 ];
+
+const VISUAL_OPTIONS: { value: '' | SlideVisual['kind']; label: string }[] = [
+  { value: '', label: 'Без схемы' },
+  { value: 'formula_hero', label: '✨ Крупная формула' },
+  { value: 'fraction_bar', label: '🍕 Плитки дробей' },
+  { value: 'number_line', label: '📏 Координатный луч' },
+  { value: 'percent_grid', label: '💯 Сетка процентов (10×10)' },
+  { value: 'angle', label: '📐 Угол с дугой' },
+  { value: 'venn', label: '⭕ Круги Эйлера–Венна' },
+  { value: 'compare', label: '⚖️ Сравнение 2 карточек' },
+];
+
+function createDefaultVisual(kind: SlideVisual['kind']): SlideVisual {
+  switch (kind) {
+    case 'formula_hero':
+      return { kind: 'formula_hero', formula: '$a + b = b + a$', caption: 'Главное правило' };
+    case 'fraction_bar':
+      return { kind: 'fraction_bar', numerator: 3, denominator: 4, label: 'Дробь 3/4' };
+    case 'number_line':
+      return {
+        kind: 'number_line',
+        min: 0,
+        max: 10,
+        points: [
+          { value: 3, label: 'A(3)', highlight: true },
+          { value: 7, label: 'B(7)', highlight: true },
+        ],
+        jump: { from: 3, to: 7, label: '+4' },
+      };
+    case 'percent_grid':
+      return { kind: 'percent_grid', percent: 35, label: '35% = 0,35' };
+    case 'angle':
+      return { kind: 'angle', degrees: 60, label: 'Острый угол меньше 90°' };
+    case 'venn':
+      return {
+        kind: 'venn',
+        leftLabel: 'Множество A',
+        rightLabel: 'Множество B',
+        leftItems: ['2', '4'],
+        bothItems: ['6', '12'],
+        rightItems: ['3', '9'],
+      };
+    case 'compare':
+      return {
+        kind: 'compare',
+        leftTitle: 'Случай 1',
+        leftText: 'Описание первого случая',
+        rightTitle: 'Случай 2',
+        rightText: 'Описание второго случая',
+      };
+  }
+}
 
 export default function SlideStudioPanel({ topic, onTopicUpdated }: Props) {
   const supabase = createClient();
@@ -196,7 +248,7 @@ export default function SlideStudioPanel({ topic, onTopicUpdated }: Props) {
                   className="bg-white rounded-2xl border border-slate-200 p-4 space-y-2.5"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-xs font-extrabold text-slate-700">
                         #{idx + 1}
                       </span>
@@ -213,11 +265,24 @@ export default function SlideStudioPanel({ topic, onTopicUpdated }: Props) {
                           </option>
                         ))}
                       </select>
-                      {s.visual && (
-                        <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[10px] font-bold">
-                          📊 Схема: {s.visual.kind}
-                        </span>
-                      )}
+
+                      <select
+                        value={s.visual?.kind || ''}
+                        onChange={(e) => {
+                          const val = e.target.value as '' | SlideVisual['kind'];
+                          updateSlide(idx, {
+                            visual: val ? createDefaultVisual(val) : null,
+                          });
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-800 text-xs font-bold"
+                        title="Встроенная схема слайда"
+                      >
+                        {VISUAL_OPTIONS.map((opt) => (
+                          <option key={opt.value || 'none'} value={opt.value}>
+                            📊 {opt.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
                     <div className="flex items-center gap-1">
@@ -267,6 +332,16 @@ export default function SlideStudioPanel({ topic, onTopicUpdated }: Props) {
                     placeholder="Основной текст (поддерживает формулы $LaTeX$)"
                     className="w-full p-2.5 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-xl"
                   />
+
+                  {/* Редактор параметров встроенной SVG-схемы */}
+                  {s.visual && (
+                    <VisualMiniEditor
+                      visual={s.visual}
+                      onChange={(nextVisual) =>
+                        updateSlide(idx, { visual: nextVisual })
+                      }
+                    />
+                  )}
 
                   {s.type === 'example' && (
                     <textarea
@@ -367,6 +442,452 @@ export default function SlideStudioPanel({ topic, onTopicUpdated }: Props) {
               ))}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VisualMiniEditor({
+  visual,
+  onChange,
+}: {
+  visual: SlideVisual;
+  onChange: (next: SlideVisual) => void;
+}) {
+  return (
+    <div className="p-3 rounded-xl bg-indigo-50/50 border border-indigo-200/80 space-y-2">
+      <div className="text-[11px] font-extrabold text-indigo-700 uppercase">
+        Настройка схемы ({visual.kind})
+      </div>
+
+      {visual.kind === 'formula_hero' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input
+            type="text"
+            value={visual.formula}
+            onChange={(e) => onChange({ ...visual, formula: e.target.value })}
+            placeholder="Формула (напр. $S = a \cdot b$)"
+            className="px-2.5 py-1.5 text-xs font-mono bg-white border border-indigo-200 rounded-lg"
+          />
+          <input
+            type="text"
+            value={visual.caption || ''}
+            onChange={(e) => onChange({ ...visual, caption: e.target.value })}
+            placeholder="Пояснение под формулой"
+            className="px-2.5 py-1.5 text-xs bg-white border border-indigo-200 rounded-lg"
+          />
+        </div>
+      )}
+
+      {visual.kind === 'fraction_bar' && (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <label className="text-[11px] font-bold text-slate-600">
+              Числитель
+              <input
+                type="number"
+                min={0}
+                max={16}
+                value={visual.numerator}
+                onChange={(e) =>
+                  onChange({ ...visual, numerator: Number(e.target.value) || 0 })
+                }
+                className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-indigo-200 rounded-lg"
+              />
+            </label>
+            <label className="text-[11px] font-bold text-slate-600">
+              Знаменатель
+              <input
+                type="number"
+                min={1}
+                max={16}
+                value={visual.denominator}
+                onChange={(e) =>
+                  onChange({
+                    ...visual,
+                    denominator: Math.max(1, Number(e.target.value) || 1),
+                  })
+                }
+                className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-indigo-200 rounded-lg"
+              />
+            </label>
+            <label className="col-span-2 text-[11px] font-bold text-slate-600">
+              Подпись
+              <input
+                type="text"
+                value={visual.label || ''}
+                onChange={(e) => onChange({ ...visual, label: e.target.value })}
+                className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-indigo-200 rounded-lg"
+              />
+            </label>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-1.5 text-[11px] font-bold text-indigo-800 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={visual.compareDenominator !== undefined}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    onChange({
+                      ...visual,
+                      compareNumerator: 1,
+                      compareDenominator: visual.denominator,
+                    });
+                  } else {
+                    const { compareNumerator: _n, compareDenominator: _d, ...rest } =
+                      visual;
+                    onChange(rest);
+                  }
+                }}
+              />
+              Сравнить со второй дробью
+            </label>
+
+            {visual.compareDenominator !== undefined && (
+              <div className="flex items-center gap-1.5 text-xs font-bold">
+                <input
+                  type="number"
+                  min={0}
+                  max={16}
+                  value={visual.compareNumerator ?? 1}
+                  onChange={(e) =>
+                    onChange({
+                      ...visual,
+                      compareNumerator: Number(e.target.value) || 0,
+                    })
+                  }
+                  className="w-14 px-2 py-1 text-xs bg-white border border-emerald-300 rounded-lg"
+                />
+                <span>/</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={16}
+                  value={visual.compareDenominator}
+                  onChange={(e) =>
+                    onChange({
+                      ...visual,
+                      compareDenominator: Math.max(1, Number(e.target.value) || 1),
+                    })
+                  }
+                  className="w-14 px-2 py-1 text-xs bg-white border border-emerald-300 rounded-lg"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {visual.kind === 'percent_grid' && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <label className="text-[11px] font-bold text-slate-600">
+            Процент (0–100)
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={visual.percent}
+              onChange={(e) =>
+                onChange({ ...visual, percent: Number(e.target.value) || 0 })
+              }
+              className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-indigo-200 rounded-lg"
+            />
+          </label>
+          <label className="sm:col-span-2 text-[11px] font-bold text-slate-600">
+            Пояснение
+            <input
+              type="text"
+              value={visual.label || ''}
+              onChange={(e) => onChange({ ...visual, label: e.target.value })}
+              className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-indigo-200 rounded-lg"
+            />
+          </label>
+        </div>
+      )}
+
+      {visual.kind === 'angle' && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <label className="text-[11px] font-bold text-slate-600">
+            Градусы (5–355°)
+            <input
+              type="number"
+              min={5}
+              max={355}
+              value={visual.degrees}
+              onChange={(e) =>
+                onChange({ ...visual, degrees: Number(e.target.value) || 60 })
+              }
+              className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-indigo-200 rounded-lg"
+            />
+          </label>
+          <label className="sm:col-span-2 text-[11px] font-bold text-slate-600">
+            Подпись
+            <input
+              type="text"
+              value={visual.label || ''}
+              onChange={(e) => onChange({ ...visual, label: e.target.value })}
+              className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-indigo-200 rounded-lg"
+            />
+          </label>
+        </div>
+      )}
+
+      {visual.kind === 'number_line' && (
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <label className="text-[11px] font-bold text-slate-600">
+              От (min)
+              <input
+                type="number"
+                value={visual.min}
+                onChange={(e) =>
+                  onChange({ ...visual, min: Number(e.target.value) || 0 })
+                }
+                className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-indigo-200 rounded-lg"
+              />
+            </label>
+            <label className="text-[11px] font-bold text-slate-600">
+              До (max)
+              <input
+                type="number"
+                value={visual.max}
+                onChange={(e) =>
+                  onChange({ ...visual, max: Number(e.target.value) || 10 })
+                }
+                className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-indigo-200 rounded-lg"
+              />
+            </label>
+            <label className="text-[11px] font-bold text-slate-600">
+              Прыжок от
+              <input
+                type="number"
+                value={visual.jump?.from ?? ''}
+                placeholder="—"
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === '') {
+                    const { jump: _j, ...rest } = visual;
+                    onChange(rest);
+                  } else {
+                    onChange({
+                      ...visual,
+                      jump: {
+                        from: Number(val),
+                        to: visual.jump?.to ?? visual.max,
+                        label: visual.jump?.label ?? '',
+                      },
+                    });
+                  }
+                }}
+                className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-emerald-200 rounded-lg"
+              />
+            </label>
+            <label className="text-[11px] font-bold text-slate-600">
+              Прыжок до
+              <input
+                type="number"
+                value={visual.jump?.to ?? ''}
+                placeholder="—"
+                onChange={(e) => {
+                  if (!visual.jump && e.target.value === '') return;
+                  onChange({
+                    ...visual,
+                    jump: {
+                      from: visual.jump?.from ?? visual.min,
+                      to: Number(e.target.value) || 0,
+                      label: visual.jump?.label ?? '',
+                    },
+                  });
+                }}
+                className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-emerald-200 rounded-lg"
+              />
+            </label>
+            <label className="text-[11px] font-bold text-slate-600">
+              Подпись дуги
+              <input
+                type="text"
+                value={visual.jump?.label ?? ''}
+                placeholder="+4"
+                onChange={(e) =>
+                  onChange({
+                    ...visual,
+                    jump: {
+                      from: visual.jump?.from ?? visual.min,
+                      to: visual.jump?.to ?? visual.max,
+                      label: e.target.value,
+                    },
+                  })
+                }
+                className="mt-0.5 w-full px-2 py-1 text-xs bg-white border border-emerald-200 rounded-lg"
+              />
+            </label>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-600">
+                Точки на луче
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  onChange({
+                    ...visual,
+                    points: [
+                      ...(visual.points || []),
+                      { value: visual.min, label: 'P', highlight: true },
+                    ],
+                  })
+                }
+                className="px-2 py-0.5 rounded-md bg-white border border-indigo-200 text-[11px] font-bold text-indigo-700"
+              >
+                + Точка
+              </button>
+            </div>
+            {(visual.points || []).map((pt, pIdx) => (
+              <div key={pIdx} className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  step="any"
+                  value={pt.value}
+                  onChange={(e) => {
+                    const nextPts = visual.points.map((p, i) =>
+                      i === pIdx ? { ...p, value: Number(e.target.value) || 0 } : p
+                    );
+                    onChange({ ...visual, points: nextPts });
+                  }}
+                  className="w-20 px-2 py-1 text-xs bg-white border border-indigo-200 rounded-lg"
+                />
+                <input
+                  type="text"
+                  value={pt.label}
+                  onChange={(e) => {
+                    const nextPts = visual.points.map((p, i) =>
+                      i === pIdx ? { ...p, label: e.target.value } : p
+                    );
+                    onChange({ ...visual, points: nextPts });
+                  }}
+                  placeholder="Подпись (напр. A(3))"
+                  className="flex-1 px-2 py-1 text-xs bg-white border border-indigo-200 rounded-lg"
+                />
+                <button
+                  type="button"
+                  onClick={() =>
+                    onChange({
+                      ...visual,
+                      points: visual.points.filter((_, i) => i !== pIdx),
+                    })
+                  }
+                  className="px-2 py-1 rounded-lg bg-rose-50 text-rose-600 text-xs font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {visual.kind === 'venn' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <input
+            type="text"
+            value={visual.leftLabel}
+            onChange={(e) => onChange({ ...visual, leftLabel: e.target.value })}
+            placeholder="Левый круг (название)"
+            className="px-2.5 py-1.5 text-xs font-bold bg-white border border-indigo-200 rounded-lg"
+          />
+          <input
+            type="text"
+            value={visual.rightLabel}
+            onChange={(e) => onChange({ ...visual, rightLabel: e.target.value })}
+            placeholder="Правый круг (название)"
+            className="px-2.5 py-1.5 text-xs font-bold bg-white border border-emerald-200 rounded-lg"
+          />
+          <input
+            type="text"
+            value={(visual.leftItems || []).join(', ')}
+            onChange={(e) =>
+              onChange({
+                ...visual,
+                leftItems: e.target.value
+                  .split(',')
+                  .map((x) => x.trim())
+                  .filter(Boolean),
+              })
+            }
+            placeholder="Только слева (через запятую)"
+            className="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg"
+          />
+          <input
+            type="text"
+            value={(visual.rightItems || []).join(', ')}
+            onChange={(e) =>
+              onChange({
+                ...visual,
+                rightItems: e.target.value
+                  .split(',')
+                  .map((x) => x.trim())
+                  .filter(Boolean),
+              })
+            }
+            placeholder="Только справа (через запятую)"
+            className="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg"
+          />
+          <input
+            type="text"
+            value={(visual.bothItems || []).join(', ')}
+            onChange={(e) =>
+              onChange({
+                ...visual,
+                bothItems: e.target.value
+                  .split(',')
+                  .map((x) => x.trim())
+                  .filter(Boolean),
+              })
+            }
+            placeholder="Общее в центре (через запятую)"
+            className="sm:col-span-2 px-2.5 py-1.5 text-xs bg-white border border-indigo-200 rounded-lg"
+          />
+        </div>
+      )}
+
+      {visual.kind === 'compare' && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="space-y-1.5">
+            <input
+              type="text"
+              value={visual.leftTitle}
+              onChange={(e) => onChange({ ...visual, leftTitle: e.target.value })}
+              placeholder="Заголовок слева"
+              className="w-full px-2.5 py-1.5 text-xs font-bold bg-white border border-indigo-200 rounded-lg"
+            />
+            <textarea
+              rows={2}
+              value={visual.leftText}
+              onChange={(e) => onChange({ ...visual, leftText: e.target.value })}
+              placeholder="Текст слева"
+              className="w-full p-2 text-xs bg-white border border-indigo-200 rounded-lg"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <input
+              type="text"
+              value={visual.rightTitle}
+              onChange={(e) => onChange({ ...visual, rightTitle: e.target.value })}
+              placeholder="Заголовок справа"
+              className="w-full px-2.5 py-1.5 text-xs font-bold bg-white border border-emerald-200 rounded-lg"
+            />
+            <textarea
+              rows={2}
+              value={visual.rightText}
+              onChange={(e) => onChange({ ...visual, rightText: e.target.value })}
+              placeholder="Текст справа"
+              className="w-full p-2 text-xs bg-white border border-emerald-200 rounded-lg"
+            />
+          </div>
         </div>
       )}
     </div>

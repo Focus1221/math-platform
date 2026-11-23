@@ -56,7 +56,6 @@ const SLIDE_META: Record<
   },
 };
 
-/** Если у урока ещё нет сохранённых слайдов — аккуратно разбиваем конспект по заголовкам ### */
 function buildFallbackSlides(topic: Topic): LessonSlide[] {
   const md = (topic.theory_md || '').trim();
   if (!md) {
@@ -90,7 +89,11 @@ function buildFallbackSlides(topic: Topic): LessonSlide[] {
     const lower = title.toLowerCase();
     let type: SlideType = idx === 0 ? 'intro' : 'concept';
     if (lower.includes('пример') || lower.includes('разбор')) type = 'example';
-    if (lower.includes('ошибк') || lower.includes('ловушк') || lower.includes('важно')) {
+    if (
+      lower.includes('ошибк') ||
+      lower.includes('ловушк') ||
+      lower.includes('важно')
+    ) {
       type = 'trap';
     }
     if (idx === chunks.length - 1 && chunks.length > 2) type = 'summary';
@@ -108,10 +111,13 @@ export default function LessonSlidesPlayer({
   topic,
   boardMode = false,
   isTeacherView = false,
+  onSlidesCompleted,
+  onGoToPractice,
 }: Props) {
   const hasRichSlides = Array.isArray(topic.slides) && topic.slides.length > 0;
   const slides = useMemo(
-    () => (hasRichSlides ? (topic.slides as LessonSlide[]) : buildFallbackSlides(topic)),
+    () =>
+      hasRichSlides ? (topic.slides as LessonSlide[]) : buildFallbackSlides(topic),
     [hasRichSlides, topic]
   );
 
@@ -121,7 +127,6 @@ export default function LessonSlidesPlayer({
   const [quizAnswers, setQuizAnswers] = useState<Record<string, number>>({});
   const [completedDeck, setCompletedDeck] = useState(false);
 
-  // Сбрасываем на 1-й слайд при смене темы
   useEffect(() => {
     setIndex(0);
     setRevealedSteps({});
@@ -133,7 +138,6 @@ export default function LessonSlidesPlayer({
   const slide = slides[safeIndex];
   const meta = SLIDE_META[slide?.type || 'concept'] || SLIDE_META.concept;
 
-  // Листание стрелками на клавиатуре (удобно на ноутбуке и проекторе)
   useEffect(() => {
     if (viewMode !== 'slides') return;
     function onKeyDown(e: KeyboardEvent) {
@@ -159,6 +163,7 @@ export default function LessonSlidesPlayer({
     if (safeIndex >= slides.length - 1) {
       playSound('celebrate');
       setCompletedDeck(true);
+      onSlidesCompleted?.();
       return;
     }
     playSound('click');
@@ -184,7 +189,6 @@ export default function LessonSlidesPlayer({
 
   return (
     <div className="space-y-4">
-      {/* Верхняя панель управления: прогресс-бар и переключение Слайды / Конспект */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <div className="inline-flex p-1 bg-slate-100 rounded-xl border border-slate-200">
@@ -232,10 +236,8 @@ export default function LessonSlidesPlayer({
         )}
       </div>
 
-      {/* РЕЖИМ 1: ИНТЕРАКТИВНЫЕ СЛАЙДЫ */}
       {viewMode === 'slides' ? (
         <div className="space-y-4">
-          {/* Полоска прогресса с кликабельными сегментами */}
           <div className="flex items-center gap-1.5">
             {slides.map((s, i) => {
               const isCurrent = i === safeIndex;
@@ -264,13 +266,11 @@ export default function LessonSlidesPlayer({
             })}
           </div>
 
-          {/* Карточка текущего слайда */}
           <div
             key={slide.id}
-            className={`rounded-3xl bg-white border-2 ${meta.accentBorder} p-5 sm:p-7 shadow-xs space-y-5 animate-pop min-h-[320px] flex flex-col justify-between`}
+            className={`rounded-3xl bg-white border-2 ${meta.accentBorder} p-5 sm:p-7 shadow-xs space-y-5 animate-pop min-h-[340px] flex flex-col justify-between`}
           >
             <div className="space-y-4">
-              {/* Бейдж типа слайда и заголовок */}
               <div className="space-y-2">
                 <span
                   className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-extrabold ${meta.badgeCls}`}
@@ -287,17 +287,14 @@ export default function LessonSlidesPlayer({
                 </h3>
               </div>
 
-              {/* Основной текст слайда */}
               {slide.body_md && (
                 <MathMarkdown content={slide.body_md} large={boardMode} />
               )}
 
-              {/* Встроенная наглядная схема / иллюстрация */}
               {slide.visual && (
                 <SlideVisualBox visual={slide.visual} large={boardMode} />
               )}
 
-              {/* Пошаговое раскрытие для примеров (type === 'example' или есть steps) */}
               {steps.length > 0 && (
                 <div className="space-y-2.5 pt-1">
                   {steps.slice(0, shownStepsCount).map((stepText, stepIdx) => (
@@ -347,7 +344,6 @@ export default function LessonSlidesPlayer({
                 </div>
               )}
 
-              {/* Карточки «Ловушка»: ❌ Неверно vs ✅ Верно */}
               {(slide.wrong_md || slide.right_md) && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                   {slide.wrong_md && (
@@ -369,7 +365,6 @@ export default function LessonSlidesPlayer({
                 </div>
               )}
 
-              {/* Интерактивная мини-проверка прямо внутри слайда */}
               {slide.type === 'quiz' &&
                 slide.quiz_options &&
                 slide.quiz_options.length > 0 && (
@@ -432,7 +427,6 @@ export default function LessonSlidesPlayer({
                   </div>
                 )}
 
-              {/* Шпаргалка (итоговые пункты) */}
               {slide.takeaways && slide.takeaways.length > 0 && (
                 <div className="space-y-2 pt-1">
                   {slide.takeaways.map((item, i) => (
@@ -452,7 +446,6 @@ export default function LessonSlidesPlayer({
               )}
             </div>
 
-            {/* Удобная нижняя панель листания прямо под рукой */}
             <div className="pt-5 mt-2 border-t border-slate-100 flex items-center justify-between gap-3">
               <button
                 type="button"
@@ -477,38 +470,47 @@ export default function LessonSlidesPlayer({
                 }`}
               >
                 {safeIndex === slides.length - 1
-                  ? '🎉 Завершить слайды'
+                  ? '⭐ Завершить слайды'
                   : 'Дальше →'}
               </button>
             </div>
           </div>
 
-          {/* Баннер поздравления после завершения слайдов */}
           {completedDeck && (
-            <div className="rounded-3xl bg-gradient-to-r from-emerald-500 via-teal-500 to-indigo-600 text-white p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md animate-pop">
+            <div className="rounded-3xl bg-gradient-to-r from-emerald-500 via-teal-500 to-indigo-600 text-white p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3.5 shadow-md animate-pop">
               <div className="space-y-0.5">
                 <div className="text-base sm:text-lg font-extrabold">
-                  🏆 Отличная работа! Теория пройдена
+                  🏆 Звезда за теорию зажжена!
                 </div>
                 <p className="text-xs sm:text-sm text-emerald-50">
-                  Теперь закрепи знания в шаге «🎮 2. Потренироваться» или переходи к «📝 3. Сдать ДЗ».
+                  Отличный темп! Теперь закрепи тему в интерактивном тренажёре.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setCompletedDeck(false);
-                  setIndex(0);
-                }}
-                className="px-4 py-2 rounded-xl bg-white/20 hover:bg-white/30 text-white text-xs font-extrabold shrink-0 transition"
-              >
-                ↻ Повторить с 1-го слайда
-              </button>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCompletedDeck(false);
+                    setIndex(0);
+                  }}
+                  className="px-3.5 py-2.5 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-extrabold transition"
+                >
+                  ↻ С начала
+                </button>
+                {onGoToPractice && (
+                  <button
+                    type="button"
+                    onClick={onGoToPractice}
+                    className="btn-tactile px-5 py-2.5 rounded-xl bg-white text-indigo-700 border-indigo-200 text-xs sm:text-sm font-extrabold shadow-xs"
+                  >
+                    🎮 Перейти к тренажёру →
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>
       ) : (
-        /* РЕЖИМ 2: ВЕСЬ КОНСПЕКТ ОДНИМ ЛИСТОМ */
         <div className="space-y-4">
           {hasRichSlides ? (
             slides.map((s, i) => (
