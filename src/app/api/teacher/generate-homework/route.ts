@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
-import { GoogleGenAI } from '@google/genai';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 
-interface GeneratedTask {
+interface DraftGenTask {
   type: 'test' | 'input' | 'open';
   difficulty: 'base' | 'standard' | 'pro';
   points: number;
@@ -11,6 +10,109 @@ interface GeneratedTask {
   options: string[];
   correct_answer: string;
   solution_hint: string;
+}
+
+const MODELS = [
+  'gemini-flash-latest',
+  'gemini-3.8-flash',
+  'gemini-flash-lite-latest',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+];
+
+interface GeminiPart {
+  text?: string;
+  thought?: boolean;
+}
+
+function extractAnswerText(data: {
+  candidates?: { content?: { parts?: GeminiPart[] } }[];
+}): string {
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+  const finalParts = parts.filter(
+    (p) => !p.thought && typeof p.text === 'string' && p.text.trim().length > 0
+  );
+  if (finalParts.length > 0) {
+    return finalParts.map((p) => p.text).join('\n');
+  }
+  return parts[parts.length - 1]?.text || '';
+}
+
+function safeParseJson(rawText: string): unknown {
+  const cleaned = rawText
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  const slice =
+    firstBrace !== -1 && lastBrace > firstBrace
+      ? cleaned.slice(firstBrace, lastBrace + 1)
+      : cleaned;
+
+  try {
+    return JSON.parse(slice);
+  } catch {
+    const repaired = slice.replace(/\\(?!["\\/bfnrtu])/g, '\\\\');
+    return JSON.parse(repaired);
+  }
+}
+
+function sanitizeTasks(raw: unknown): DraftGenTask[] {
+  if (!Array.isArray(raw)) return [];
+  const tasks: DraftGenTask[] = [];
+
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as Record<string, unknown>;
+
+    const rawType = String(obj.type || 'test');
+    const type: DraftGenTask['type'] =
+      rawType === 'input' || rawType === 'open' ? rawType : 'test';
+
+    const rawDiff = String(obj.difficulty || 'standard');
+    const difficulty: DraftGenTask['difficulty'] =
+      rawDiff === 'base' || rawDiff === 'pro' ? rawDiff : 'standard';
+
+    const question_md = String(obj.question_md || '').trim();
+    if (!question_md) continue;
+
+    const options =
+      type === 'test' && Array.isArray(obj.options)
+        ? obj.options.map((o) => String(o).trim()).filter(Boolean).slice(0, 4)
+        : [];
+
+    let correct_answer =
+      type === 'open' ? '' : String(obj.correct_answer ?? '').trim();
+
+    if (type === 'test' && options.length >= 2 && !options.includes(correct_answer)) {
+      correct_answer = options[0];
+    }
+
+    const rawPoints = Number(obj.points);
+    const points =
+      Number.isFinite(rawPoints) && rawPoints >= 1 && rawPoints <= 10
+        ? Math.round(rawPoints)
+        : difficulty === 'base'
+          ? 1
+          : difficulty === 'pro'
+            ? 3
+            : 2;
+
+    tasks.push({
+      type: type === 'test' && options.length < 2 ? 'input' : type,
+      difficulty,
+      points,
+      question_md,
+      options: type === 'test' && options.length >= 2 ? options : [],
+      correct_answer,
+      solution_hint: String(obj.solution_hint || '').trim(),
+    });
+  }
+
+  return tasks;
 }
 
 export async function POST(request: Request) {
@@ -25,146 +127,143 @@ export async function POST(request: Request) {
     }
 
     const admin = createAdminSupabase();
-    const { data: profile } = await admin
+    const { data: me } = await admin
       .from('profiles')
       .select('role')
       .eq('id', user.id)
       .single();
 
-    if (profile?.role !== 'teacher') {
+    if (me?.role !== 'teacher') {
       return NextResponse.json({ error: 'Доступ только для учителя' }, { status: 403 });
     }
 
-    if (!process.env.GEMINI_API_KEY) {
+    const apiKey = (process.env.GEMINI_API_KEY || '')
+      .trim()
+      .replace(/^["']|["']$/g, '');
+    if (!apiKey) {
       return NextResponse.json(
-        { error: 'На сервере не настроен GEMINI_API_KEY' },
+        { error: 'Не задан ключ GEMINI_API_KEY в переменных окружения.' },
         { status: 500 }
       );
     }
 
     const body = await request.json();
-    const topicId = String(body.topicId || '');
-    const count = body.count === 5 ? 5 : 3;
+    const topicId = String(body.topicId || '').trim();
+    const count = Number(body.count) === 5 ? 5 : 3;
     const extraWish = String(body.extraWish || '').trim();
 
     if (!topicId) {
-      return NextResponse.json({ error: 'Не указана тема урока' }, { status: 400 });
+      return NextResponse.json({ error: 'Не указан ID темы' }, { status: 400 });
     }
 
-    const { data: topic, error: topicErr } = await admin
+    const { data: topic } = await admin
       .from('topics')
-      .select(
-        'title, section, objectives, value_example, theory_md, courses ( grade_number, subject )'
-      )
+      .select('id, title, section, objectives, value_example, theory_md')
       .eq('id', topicId)
       .single();
 
-    if (topicErr || !topic) {
+    if (!topic) {
       return NextResponse.json({ error: 'Тема не найдена' }, { status: 404 });
     }
 
-    const rawCourse = topic.courses as
-      | { grade_number?: number; subject?: string }
-      | { grade_number?: number; subject?: string }[]
-      | null;
-    const course = Array.isArray(rawCourse) ? rawCourse[0] : rawCourse;
-    const grade = course?.grade_number || 5;
-    const subject = course?.subject || 'Математика';
-    const objectives = Array.isArray(topic.objectives) ? topic.objectives.join('; ') : '';
+    const objectivesText = Array.isArray(topic.objectives)
+      ? topic.objectives.join('; ')
+      : '';
 
-    const distribution =
-      count === 3
-        ? '1 задание уровня base (type: "test", points: 1), 1 задание уровня standard (type: "input", points: 2), 1 задание уровня pro (type: "open", points: 3).'
-        : '2 задания уровня base (type: "test", points: 1), 2 задания уровня standard (type: "input", points: 2), 1 задание уровня pro (type: "open", points: 3).';
+    const prompt = `Ты — опытный учитель математики в Казахстане. Составь разноуровневый комплект домашнего задания из ${count} задач на русском языке.
 
-    const systemPrompt = `Ты — опытный учитель предмета «${subject}» (${grade} класс, программа Республики Казахстан).
-Твоя задача — составить качественные, математически безошибочные домашние задания строго по теме и целям обучения (ЦО).
+Тема урока: "${topic.title}"
+Раздел: "${topic.section}"
+Цели обучения (ЦО): "${objectivesText}"
+Жизненный контекст: "${topic.value_example || ''}"
+Конспект: "${(topic.theory_md || '').slice(0, 1000)}"
+Пожелание учителя: "${extraWish || 'Сделай интересные, понятные и корректные по математике задачи.'}"
 
-Верни СТРОГО валидный JSON-массив объектов без лишнего текста. Структура каждого объекта:
-{
-  "type": "test" | "input" | "open",
-  "difficulty": "base" | "standard" | "pro",
-  "points": число (1..5),
-  "question_md": "условие задачи на русском, формулы в LaTeX через $...$, например $\\\\frac{3}{4}$",
-  "options": ["вариант 1", "вариант 2", "вариант 3", "вариант 4"] (для "test" ровно 4 варианта; для "input" и "open" — пустой массив []),
-  "correct_answer": "точный ответ" (для "test" строка ДОЛЖНА БУКВА В БУКВУ совпадать с одним из elements в options; для "input" — только число или дробь, напр. "42" или "3/4" или "2,5" без единиц измерения; для "open" — пустая строка ""),
-  "solution_hint": "короткая подсказка при ошибке (1 предложение, без прямого ответа)"
+Состав комплекта из ${count} заданий:
+${
+  count === 3
+    ? '- 1 задание уровня "base" (type: "test", 1 балл)\n- 1 задание уровня "standard" (type: "input", 2 балла)\n- 1 задание уровня "pro" (type: "open", 3 балла)'
+    : '- 2 задания уровня "base" (type: "test", по 1 баллу)\n- 2 задания уровня "standard" (type: "input", по 2 балла)\n- 1 задание уровня "pro" (type: "open", 3 балла)'
 }
 
-ОБЯЗАТЕЛЬНО дважды перепроверь арифметику каждого ответа перед выводом JSON.`;
+Правила формата:
+- Формулы пиши в LaTeX внутри одинарных долларов (в JSON экранируй обратный слэш как \\\\).
+- Для type: "test" обязательно укажи 4 варианта в "options", и "correct_answer" должен ТОЧНО совпадать с одним из элементов "options".
+- Для type: "input" правильный ответ в "correct_answer" должен быть коротким числом или дробью (например: "42", "3/4", "2,5"); в "options" передай [].
+- Для type: "open" в "options" передай [], в "correct_answer" передай "".
+- В "solution_hint" напиши короткую наводящую подсказку на случай ошибки.
+- Обязательно перепроверь арифметику каждого задания!
 
-    const userPrompt = `Тема урока: «${topic.title}»
-Раздел: ${topic.section}
-Цели обучения (ЦО): ${objectives || 'по названию темы'}
-Контекст урока: ${topic.value_example || 'нет'}
-Краткий конспект: ${(topic.theory_md || '').slice(0, 1200)}
-Нужно составить ровно ${count} заданий: ${distribution}
-${extraWish ? `Дополнительное пожелание учителя: ${extraWish}` : ''}`;
+Верни СТРОГО валидный JSON-объект вида { "tasks": [ ... ] }.`;
 
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const response = await ai.models.generateContent({
-      model: process.env.GEMINI_MODEL || 'gemini-flash-latest',
-      contents: userPrompt,
-      config: {
-        systemInstruction: systemPrompt,
-        responseMimeType: 'application/json',
-        temperature: 0.45,
-      },
-    });
+    let geminiData: {
+      candidates?: { content?: { parts?: GeminiPart[] } }[];
+    } | null = null;
+    let lastStatus = 502;
+    let lastReason = 'Нет ответа от Gemini';
 
-    const rawText = (response.text || '')
-      .trim()
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/```$/i, '')
-      .trim();
+    for (const model of MODELS) {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.6,
+              maxOutputTokens: 4096,
+              responseMimeType: 'application/json',
+            },
+          }),
+        }
+      );
 
-    const parsed = JSON.parse(rawText);
-    if (!Array.isArray(parsed)) {
+      if (res.ok) {
+        geminiData = await res.json();
+        break;
+      }
+
+      lastStatus = res.status;
+      const errText = await res.text();
+      console.error(`Gemini homework error (${model}, ${res.status}):`, errText);
+
+      try {
+        const errJson = JSON.parse(errText);
+        lastReason = errJson?.error?.message || errText.slice(0, 200);
+      } catch {
+        lastReason = errText.slice(0, 200);
+      }
+
+      if (res.status === 400 && lastReason.toLowerCase().includes('api key')) {
+        break;
+      }
+    }
+
+    if (!geminiData) {
       return NextResponse.json(
-        { error: 'ИИ вернул неожиданный формат. Попробуйте ещё раз.' },
+        { error: `Ошибка Gemini (${lastStatus}): ${lastReason}` },
         { status: 502 }
       );
     }
 
-    const tasks: GeneratedTask[] = parsed.map((item) => {
-      const type: GeneratedTask['type'] =
-        item.type === 'test' || item.type === 'input' || item.type === 'open'
-          ? item.type
-          : 'input';
-      const difficulty: GeneratedTask['difficulty'] =
-        item.difficulty === 'base' ||
-        item.difficulty === 'standard' ||
-        item.difficulty === 'pro'
-          ? item.difficulty
-          : 'standard';
+    const rawText = extractAnswerText(geminiData);
+    const parsed = safeParseJson(rawText) as { tasks?: unknown } | unknown[];
+    const tasks = sanitizeTasks(Array.isArray(parsed) ? parsed : parsed?.tasks);
 
-      const options =
-        type === 'test' && Array.isArray(item.options)
-          ? item.options.map((o: unknown) => String(o).trim()).filter(Boolean)
-          : [];
-
-      let correct = type === 'open' ? '' : String(item.correct_answer || '').trim();
-      if (type === 'test' && options.length > 0 && !options.includes(correct)) {
-        correct = options[0];
-      }
-
-      return {
-        type,
-        difficulty,
-        points: Math.max(1, Math.min(10, Number(item.points) || 2)),
-        question_md: String(item.question_md || '').trim(),
-        options,
-        correct_answer: correct,
-        solution_hint: String(item.solution_hint || '').trim(),
-      };
-    });
+    if (tasks.length === 0) {
+      return NextResponse.json(
+        { error: 'ИИ вернул пустой список заданий. Попробуй ещё раз.' },
+        { status: 500 }
+      );
+    }
 
     return NextResponse.json({ tasks });
   } catch (err) {
     console.error('generate-homework error:', err);
+    const detail = err instanceof Error ? err.message : String(err);
     return NextResponse.json(
-      { error: 'Не удалось сгенерировать задания. Попробуйте ещё раз.' },
+      { error: `Ошибка генерации ДЗ: ${detail}` },
       { status: 500 }
     );
   }
