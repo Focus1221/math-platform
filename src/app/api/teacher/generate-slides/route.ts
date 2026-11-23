@@ -311,22 +311,26 @@ export async function POST(request: Request) {
     let lastReason = 'Нет ответа от Gemini';
 
     for (const model of MODELS) {
-      const res = await fetch(
-        `[https://generativelanguage.googleapis.com/v1beta/models/$](https://generativelanguage.googleapis.com/v1beta/models/$){model}:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 8192,
-              responseMimeType: 'application/json',
-            },
-          }),
-        }
-      );
+      const endpoint =
+        'https://generativelanguage.googleapis.com/v1beta/models/' +
+        encodeURIComponent(model) +
+        ':generateContent';
 
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 8192,
+            responseMimeType: 'application/json',
+          },
+        }),
+      });
       if (res.ok) {
         geminiData = await res.json();
         break;
