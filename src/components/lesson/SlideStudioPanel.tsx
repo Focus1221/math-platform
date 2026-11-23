@@ -76,7 +76,6 @@ export default function SlideStudioPanel({ topic, onTopicUpdated }: Props) {
       }
       const generated = (data.slides || []) as LessonSlide[];
       setSlides(generated);
-      // Сразу сохраняем и показываем живой результат наверху в плеере!
       await saveSlidesToDb(generated);
       setOpenEditor(true);
     } catch {
@@ -137,7 +136,6 @@ export default function SlideStudioPanel({ topic, onTopicUpdated }: Props) {
         </button>
       </div>
 
-      {/* Панель быстрой ИИ-генерации */}
       <div className="flex flex-col sm:flex-row gap-2">
         <input
           type="text"
@@ -166,7 +164,6 @@ export default function SlideStudioPanel({ topic, onTopicUpdated }: Props) {
         </div>
       )}
 
-      {/* Ручной редактор слайдов */}
       {openEditor && (
         <div className="space-y-3 pt-3 border-t border-violet-200/70">
           <div className="flex flex-wrap items-center justify-between gap-2">

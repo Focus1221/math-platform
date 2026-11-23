@@ -10,6 +10,8 @@ interface Props {
   topic: Topic;
   boardMode?: boolean;
   isTeacherView?: boolean;
+  onSlidesCompleted?: () => void;
+  onGoToPractice?: () => void;
 }
 
 const SLIDE_META: Record<

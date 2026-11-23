@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import MathMarkdown from './MathMarkdown';
-import type { Material, Topic } from '@/types/db';
 import LessonSlidesPlayer from './LessonSlidesPlayer';
 import SlideStudioPanel from './SlideStudioPanel';
+import MaterialPreviewModal from './MaterialPreviewModal';
+import type { Material, Topic } from '@/types/db';
+
 interface Props {
   topic: Topic;
   materials: Material[];
@@ -13,6 +14,8 @@ interface Props {
   boardMode?: boolean;
   onTopicUpdated: (updated: Topic) => void;
   onMaterialsChanged: (next: Material[]) => void;
+  onSlidesCompleted?: () => void;
+  onGoToPractice?: () => void;
 }
 
 const KIND_META: Record<string, { label: string; icon: string; cls: string }> = {
@@ -38,7 +41,6 @@ const KIND_META: Record<string, { label: string; icon: string; cls: string }> = 
   },
 };
 
-// В аргументах функции:
 export default function TheoryTab({
   topic,
   materials,
@@ -46,6 +48,8 @@ export default function TheoryTab({
   boardMode = false,
   onTopicUpdated,
   onMaterialsChanged,
+  onSlidesCompleted,
+  onGoToPractice,
 }: Props) {
   const supabase = createClient();
 
@@ -61,8 +65,11 @@ export default function TheoryTab({
   const [desc, setDesc] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [previewItem, setPreviewItem] = useState<{
+    title: string;
+    url: string;
+  } | null>(null);
 
-  // Синхронизируем черновик при переключении на другую тему
   useEffect(() => {
     setDraft(topic.theory_md || '');
     setEditing(false);
@@ -154,19 +161,20 @@ export default function TheoryTab({
     }
   }
 
-  const hideEmptyMaterials = boardMode && !canEdit && visibleMaterials.length === 0;
+  // Если материалов нет и не включён редактор — отдаём всю ширину под слайды
+  const hideEmptyMaterials = !canEdit && visibleMaterials.length === 0;
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-      {/* Левая колонка: Конспект */}
+      {/* Основная колонка: Интерактивные слайды и конспект */}
       <div
         className={`${
           hideEmptyMaterials ? 'lg:col-span-3' : 'lg:col-span-2'
         } bg-white rounded-3xl border border-slate-200 shadow-xs p-5 sm:p-6 space-y-4`}
       >
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h3 className="text-base sm:text-lg font-bold text-slate-900">
-            📘 Конспект урока
+          <h3 className="text-base sm:text-lg font-extrabold text-slate-900">
+            📘 Урок и слайды
           </h3>
           {canEdit && (
             <button
@@ -175,9 +183,9 @@ export default function TheoryTab({
                 setDraft(topic.theory_md || '');
                 setEditing((v) => !v);
               }}
-              className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition"
+              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 transition"
             >
-              {editing ? 'Отмена' : '✏️ Редактировать'}
+              {editing ? 'Отмена' : '✏️ Текст конспекта'}
             </button>
           )}
         </div>
@@ -199,18 +207,20 @@ export default function TheoryTab({
                 type="button"
                 disabled={savingTheory}
                 onClick={saveTheory}
-                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
+                className="btn-tactile px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold transition"
               >
                 {savingTheory ? 'Сохранение...' : '💾 Сохранить конспект'}
               </button>
             </div>
           </div>
-       ) : (
+        ) : (
           <div className="space-y-4">
             <LessonSlidesPlayer
               topic={topic}
               boardMode={boardMode}
               isTeacherView={canEdit}
+              onSlidesCompleted={onSlidesCompleted}
+              onGoToPractice={onGoToPractice}
             />
             {canEdit && (
               <SlideStudioPanel
@@ -222,126 +232,147 @@ export default function TheoryTab({
         )}
       </div>
 
-
-      {/* Правая колонка: Файлы и презентации */}
+      {/* Правая колонка: Файлы, презентации и видео */}
       {!hideEmptyMaterials && (
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 space-y-4 h-fit">
-        <div className="flex items-center justify-between">
-          <h3 className="text-base font-bold text-slate-900">
-            📎 Материалы к уроку
-          </h3>
-          <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-            {visibleMaterials.length}
-          </span>
-        </div>
-
-        {visibleMaterials.length === 0 ? (
-          <div className="text-center py-6 px-3 rounded-2xl bg-slate-50 border border-dashed border-slate-200 text-xs text-slate-500">
-            Файлы и презентации к этой теме пока не добавлены.
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 space-y-4 h-fit">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-extrabold text-slate-900">
+              📎 Материалы к уроку
+            </h3>
+            <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+              {visibleMaterials.length}
+            </span>
           </div>
-        ) : (
-          <div className="space-y-2.5">
-            {visibleMaterials.map((m) => {
-              const meta = KIND_META[m.kind] || KIND_META.link;
-              return (
-                <div
-                  key={m.id}
-                  className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <span
-                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${meta.cls}`}
-                    >
-                      {meta.icon} {meta.label}
-                    </span>
-                    {canEdit && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteMaterial(m)}
-                        className="text-xs font-bold text-slate-400 hover:text-rose-600"
-                        title="Удалить материал"
+
+          {visibleMaterials.length === 0 ? (
+            <div className="text-center py-6 px-3 rounded-2xl bg-slate-50 border border-dashed border-slate-200 text-xs text-slate-500">
+              Файлы и презентации к этой теме пока не добавлены.
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {visibleMaterials.map((m) => {
+                const meta = KIND_META[m.kind] || KIND_META.link;
+                return (
+                  <div
+                    key={m.id}
+                    className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${meta.cls}`}
                       >
-                        ✕
-                      </button>
+                        {meta.icon} {meta.label}
+                      </span>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteMaterial(m)}
+                          className="text-xs font-bold text-slate-400 hover:text-rose-600"
+                          title="Удалить материал"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-sm font-extrabold text-slate-900">
+                      {m.title}
+                    </div>
+                    {m.description && (
+                      <p className="text-xs text-slate-500">{m.description}</p>
+                    )}
+                    {m.url && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPreviewItem({ title: m.title, url: m.url! })
+                          }
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition"
+                        >
+                          👁️ Смотреть здесь
+                        </button>
+                        <a
+                          href={m.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold transition"
+                          title="Открыть в новой вкладке"
+                        >
+                          {m.file_name ? '⬇ Скачать' : '↗'}
+                        </a>
+                      </div>
                     )}
                   </div>
-                  <div className="text-sm font-bold text-slate-900">{m.title}</div>
-                  {m.description && (
-                    <p className="text-xs text-slate-500">{m.description}</p>
-                  )}
-                  {m.url && (
-                    <a
-                      href={m.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-semibold transition"
-                    >
-                      {m.file_name
-                        ? `⬇ Скачать (${m.file_name})`
-                        : '↗ Открыть материал'}
-                    </a>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {canEdit && (
-          <form
-            onSubmit={handleAddMaterial}
-            className="pt-4 border-t border-slate-100 space-y-2.5"
-          >
-            <div className="text-xs font-bold text-indigo-700 uppercase">
-              + Загрузить материал
+                );
+              })}
             </div>
-            <select
-              value={kind}
-              onChange={(e) => setKind(e.target.value as typeof kind)}
-              className="w-full px-3 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl"
+          )}
+
+          {canEdit && (
+            <form
+              onSubmit={handleAddMaterial}
+              className="pt-4 border-t border-slate-100 space-y-2.5"
             >
-              <option value="presentation">📊 Презентация (PPTX / PDF)</option>
-              <option value="pdf">📄 Документ / PDF / DOCX</option>
-              <option value="video">🎬 Видеоурок (ссылка)</option>
-              <option value="link">🔗 Полезная ссылка</option>
-            </select>
-            <input
-              type="text"
-              required
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Название материала"
-              className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
-            />
-            <input
-              type="url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="Ссылка (или загрузи файл ниже)"
-              className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
-            />
-            <input
-              type="file"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-              className="w-full text-[11px] text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:font-semibold"
-            />
-            <textarea
-              rows={2}
-              value={desc}
-              onChange={(e) => setDesc(e.target.value)}
-              placeholder="Краткое описание..."
-              className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
-            />
-            <button
-              type="submit"
-              disabled={uploading}
-              className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white text-xs font-bold transition"
-            >
-              {uploading ? 'Загрузка в облако...' : 'Прикрепить к уроку'}
-            </button>
-          </form>
-        )}
-      </div>
-    )}</div>
+              <div className="text-xs font-extrabold text-indigo-700 uppercase">
+                + Загрузить материал
+              </div>
+              <select
+                value={kind}
+                onChange={(e) => setKind(e.target.value as typeof kind)}
+                className="w-full px-3 py-2 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl"
+              >
+                <option value="presentation">📊 Презентация (PPTX / PDF / Canva)</option>
+                <option value="pdf">📄 Документ / PDF / DOCX</option>
+                <option value="video">🎬 Видеоурок (YouTube / ссылка)</option>
+                <option value="link">🔗 Полезная ссылка</option>
+              </select>
+              <input
+                type="text"
+                required
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Название материала"
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+              />
+              <input
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="Ссылка (или загрузи файл ниже)"
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+              />
+              <input
+                type="file"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                className="w-full text-[11px] text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-indigo-50 file:text-indigo-700 file:font-semibold"
+              />
+              <textarea
+                rows={2}
+                value={desc}
+                onChange={(e) => setDesc(e.target.value)}
+                placeholder="Краткое описание..."
+                className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+              />
+              <button
+                type="submit"
+                disabled={uploading}
+                className="btn-tactile w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs font-extrabold transition"
+              >
+                {uploading ? 'Загрузка в облако...' : 'Прикрепить к уроку'}
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+
+      {/* Встроенный просмотрщик презентаций / PDF / видео */}
+      {previewItem && (
+        <MaterialPreviewModal
+          title={previewItem.title}
+          url={previewItem.url}
+          onClose={() => setPreviewItem(null)}
+        />
+      )}
+    </div>
   );
 }
