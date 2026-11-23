@@ -13,11 +13,10 @@ interface DraftGenTask {
 }
 
 const MODELS = [
+  'gemini-4-hydrogen',
   'gemini-flash-latest',
   'gemini-3.8-flash',
   'gemini-flash-lite-latest',
-  'gemini-3.5-flash-lite',
-  'gemini-3.1-flash-lite',
 ];
 
 interface GeminiPart {
@@ -202,7 +201,7 @@ ${
     let lastStatus = 502;
     let lastReason = 'Нет ответа от Gemini';
 
-    for (const model of MODELS) {
+   for (const model of MODELS) {
       const endpoint =
         'https://generativelanguage.googleapis.com/v1beta/models/' +
         encodeURIComponent(model) +
