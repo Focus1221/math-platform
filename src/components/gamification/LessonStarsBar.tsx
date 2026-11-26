@@ -62,11 +62,11 @@ export default function LessonStarsBar({ progress, onSelectStep }: Props) {
             key={item.key}
             type="button"
             onClick={() => onSelectStep?.(item.key)}
-            className={`px-2.5 py-2 rounded-xl border text-left transition flex items-center gap-2 ${
-              item.done
-                ? 'bg-amber-50 border-amber-300 text-amber-950'
-                : 'bg-slate-50 border-slate-200 hover:border-indigo-300 text-slate-600'
-            }`}
+           className={`px-2.5 py-2 rounded-xl border text-left transition flex items-center gap-2 ${
+  item.done
+    ? 'bg-amber-50 border-amber-300 text-amber-800'
+    : 'bg-slate-50 border-slate-200 hover:border-indigo-300 text-slate-600'
+}`}
           >
             <span className="text-base leading-none shrink-0">
               {item.done ? '⭐' : item.icon}
