@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useGamification } from '@/hooks/useGamification';
+import GamificationHeader from '@/components/gamification/GamificationHeader';
+import LessonStarsBar from '@/components/gamification/LessonStarsBar';
 import TheoryTab from './TheoryTab';
 import InteractiveTab from './InteractiveTab';
 import HomeworkTab from './HomeworkTab';
@@ -71,6 +74,14 @@ export default function CourseWorkspace({
   const [theme, setTheme] = useState<AppTheme>('bright');
   const [confettiKey, setConfettiKey] = useState(0);
 
+  const {
+    stats,
+    starsMap,
+    rewardBanner,
+    markSlidesDone,
+    markHomeworkDone,
+  } = useGamification(Boolean(profile));
+
   const initialMatchedTopic =
     initialTopics.find((t) => t.id === initialTopicId) ||
     initialTopics[0] ||
@@ -88,10 +99,6 @@ export default function CourseWorkspace({
     }
     return 'theory';
   });
-
-  // Локальные звёзды текущего урока (за теорию и тренажёр)
-  const [slidesDoneIds, setSlidesDoneIds] = useState<string[]>([]);
-  const [visitedPracticeIds, setVisitedPracticeIds] = useState<string[]>([]);
 
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'assessment' | 'completed'>('all');
@@ -223,11 +230,6 @@ export default function CourseWorkspace({
   function switchTab(nextTab: TabId, scrollToTabs = false) {
     playSound('click');
     setActiveTab(nextTab);
-    if (nextTab === 'interactive' && activeTopic) {
-      setVisitedPracticeIds((prev) =>
-        prev.includes(activeTopic.id) ? prev : [...prev, activeTopic.id]
-      );
-    }
     if (scrollToTabs) {
       setTimeout(() => {
         tabsNavRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -323,10 +325,18 @@ export default function CourseWorkspace({
 
   function handleSlidesCompleted() {
     if (!activeTopic) return;
-    setConfettiKey((k) => k + 1);
-    setSlidesDoneIds((prev) =>
-      prev.includes(activeTopic.id) ? prev : [...prev, activeTopic.id]
-    );
+    if (!starsMap[activeTopic.id]?.slides_done) {
+      setConfettiKey((k) => k + 1);
+    }
+    markSlidesDone(activeTopic.id);
+  }
+
+  function handleHomeworkSubmitted() {
+    if (!activeTopic) return;
+    if (!starsMap[activeTopic.id]?.homework_done) {
+      setConfettiKey((k) => k + 1);
+    }
+    markHomeworkDone(activeTopic.id);
   }
 
   async function handleAddTopic(e: React.FormEvent) {
@@ -384,14 +394,11 @@ export default function CourseWorkspace({
     ? topicBadgeMap.get(activeTopic.id)
     : undefined;
 
+  const activeStars = activeTopic ? starsMap[activeTopic.id] : undefined;
   const isTopicDone = activeTopic ? completedIds.includes(activeTopic.id) : false;
-  const starTheory = activeTopic
-    ? isTopicDone || slidesDoneIds.includes(activeTopic.id)
-    : false;
-  const starPractice = activeTopic
-    ? isTopicDone || visitedPracticeIds.includes(activeTopic.id)
-    : false;
-  const starLesson = isTopicDone;
+  const starTheory = Boolean(activeStars?.slides_done);
+  const starPractice = Boolean(activeStars?.practice_done);
+  const starHomework = Boolean(activeStars?.homework_done);
 
   const currentThemeMeta =
     THEME_OPTIONS.find((t) => t.id === theme) || THEME_OPTIONS[0];
@@ -401,13 +408,13 @@ export default function CourseWorkspace({
       ? [
           { id: 'theory', label: '📘 1. Понять', shortLabel: '📘 Понять', star: starTheory },
           { id: 'interactive', label: '🎮 2. Потренироваться', shortLabel: '🎮 Тренажёр', star: starPractice },
-          { id: 'homework', label: '📝 3. Сдать ДЗ', shortLabel: '📝 ДЗ', star: starLesson },
+          { id: 'homework', label: '📝 3. Сдать ДЗ', shortLabel: '📝 ДЗ', star: starHomework },
           { id: 'passport', label: '📋 Паспорт КТП', shortLabel: '📋 КТП' },
         ]
       : [
           { id: 'theory', label: '📘 1. Понять', shortLabel: '📘 Понять', star: starTheory },
           { id: 'interactive', label: '🎮 2. Потренироваться', shortLabel: '🎮 Тренажёр', star: starPractice },
-          { id: 'homework', label: '📝 3. Сдать ДЗ', shortLabel: '📝 ДЗ', star: starLesson },
+          { id: 'homework', label: '📝 3. Сдать ДЗ', shortLabel: '📝 ДЗ', star: starHomework },
         ];
 
   return (
@@ -600,7 +607,7 @@ export default function CourseWorkspace({
         </div>
       </header>
 
-      {/* Выезжающая шторка «Все темы» (на всех экранах — не съедает место внутри урока) */}
+      {/* Выезжающая шторка «Все темы» */}
       {!boardMode && drawerOpen && (
         <div
           onClick={() => setDrawerOpen(false)}
@@ -707,6 +714,13 @@ export default function CourseWorkspace({
                       const isActive = t.id === activeTopic?.id;
                       const isDone = completedIds.includes(t.id);
                       const badge = topicBadgeMap.get(t.id);
+                      const tStars = starsMap[t.id];
+                      const starsCount = tStars
+                        ? (tStars.slides_done ? 1 : 0) +
+                          (tStars.practice_done ? 1 : 0) +
+                          (tStars.homework_done ? 1 : 0)
+                        : 0;
+
                       return (
                         <button
                           key={t.id}
@@ -740,6 +754,11 @@ export default function CourseWorkspace({
                               {t.title}
                             </div>
                             <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                              {starsCount > 0 && (
+                                <span className="px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-800 text-[9px] font-extrabold">
+                                  ⭐ {starsCount}/3
+                                </span>
+                              )}
                               {badge === 'today' && (
                                 <span className="px-1.5 py-0.5 rounded-md bg-emerald-500 text-white text-[9px] font-extrabold">
                                   ● Сегодня
@@ -814,11 +833,16 @@ export default function CourseWorkspace({
           </div>
         ) : (
           <div
-            className={`mx-auto space-y-5 ${
+            className={`mx-auto space-y-4 ${
               boardMode ? 'max-w-7xl' : 'max-w-5xl'
             }`}
           >
-            {/* Живая карточка урока со звёздами */}
+            {/* Панель XP, уровня, стрика и бейджей */}
+            {!boardMode && (
+              <GamificationHeader stats={stats} rewardBanner={rewardBanner} />
+            )}
+
+            {/* Карточка текущего урока */}
             <section
               className={`bg-white rounded-3xl border-2 shadow-xs p-5 sm:p-6 space-y-4 ${
                 activeScheduleBadge === 'today'
@@ -865,24 +889,9 @@ export default function CourseWorkspace({
                   </h2>
                 </div>
 
-                {/* Звёзды урока и кнопка завершения */}
+                {/* Кнопка завершения урока */}
                 {!boardMode && (
                   <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-                    <div
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-amber-50 border border-amber-200 text-xs font-extrabold text-amber-900"
-                      title="Звёзды за шаги урока: Теория, Тренажёр, Завершение"
-                    >
-                      <span className={starTheory ? 'opacity-100' : 'opacity-25 grayscale'}>
-                        ⭐
-                      </span>
-                      <span className={starPractice ? 'opacity-100' : 'opacity-25 grayscale'}>
-                        ⭐
-                      </span>
-                      <span className={starLesson ? 'opacity-100' : 'opacity-25 grayscale'}>
-                        ⭐
-                      </span>
-                    </div>
-
                     <button
                       type="button"
                       onClick={() => toggleComplete(activeTopic.id)}
@@ -908,6 +917,16 @@ export default function CourseWorkspace({
                 </div>
               )}
             </section>
+
+            {/* Полоска 3 звёзд урока из Supabase */}
+            {!boardMode && (
+              <LessonStarsBar
+                progress={activeStars}
+                onSelectStep={(step) =>
+                  switchTab(step === 'practice' ? 'interactive' : step, true)
+                }
+              />
+            )}
 
             {/* 3 понятных шага урока (квест-навигация) */}
             <nav
@@ -995,19 +1014,20 @@ export default function CourseWorkspace({
                   topic={activeTopic}
                   canEdit={teacherMode}
                   profile={profile}
+                  onHomeworkSubmitted={handleHomeworkSubmitted}
                 />
 
                 {!boardMode && !isTopicDone && (
                   <div className="rounded-3xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
                     <div className="text-xs sm:text-sm font-bold text-emerald-900">
-                      Всё разобрал и отправил ДЗ? Зажги финальную звезду этого урока!
+                      Всё разобрал и отправил ДЗ? Отметь урок пройденным в карте курса!
                     </div>
                     <button
                       type="button"
                       onClick={() => toggleComplete(activeTopic.id)}
                       className="btn-tactile px-5 py-2.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 text-white text-xs sm:text-sm font-extrabold"
                     >
-                      ⭐ Завершить урок
+                      ✓ Завершить урок
                     </button>
                   </div>
                 )}

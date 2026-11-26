@@ -11,6 +11,7 @@ interface Props {
   topic: Topic;
   canEdit: boolean;
   profile: Profile | null;
+  onHomeworkSubmitted?: () => void;
 }
 
 interface DraftGenTask {
@@ -29,7 +30,12 @@ const DIFF_META: Record<HomeworkTask['difficulty'], { label: string; cls: string
   pro: { label: 'Профи', cls: 'bg-purple-50 text-purple-700 border-purple-200' },
 };
 
-export default function HomeworkTab({ topic, canEdit, profile }: Props) {
+export default function HomeworkTab({
+  topic,
+  canEdit,
+  profile,
+  onHomeworkSubmitted,
+}: Props) {
   const supabase = createClient();
 
   const [tasks, setTasks] = useState<HomeworkTask[]>([]);
@@ -153,8 +159,22 @@ export default function HomeworkTab({ topic, canEdit, profile }: Props) {
         playSound('success');
       }
 
-      setSubmissions((prev) => ({ ...prev, [taskId]: sub }));
+      const nextSubmissions = { ...submissions, [taskId]: sub };
+      setSubmissions(nextSubmissions);
       setDraftAnswers((prev) => ({ ...prev, [taskId]: sub.answer_text || '' }));
+
+      // Зажигаем звезду ДЗ, когда все задания урока выполнены
+      const allCompleted =
+        tasks.length > 0 &&
+        tasks.every((t) => {
+          const s = nextSubmissions[t.id];
+          if (!s) return false;
+          return t.type === 'open' ? true : Boolean(s.is_correct);
+        });
+      if (allCompleted) {
+        onHomeworkSubmitted?.();
+      }
+
       if (data.hint) {
         setHints((prev) => ({ ...prev, [taskId]: data.hint }));
       } else {
