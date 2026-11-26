@@ -79,6 +79,7 @@ export default function CourseWorkspace({
     starsMap,
     rewardBanner,
     markSlidesDone,
+    reportPracticeSolved,
     markHomeworkDone,
   } = useGamification(Boolean(profile));
 
@@ -329,6 +330,15 @@ export default function CourseWorkspace({
       setConfettiKey((k) => k + 1);
     }
     markSlidesDone(activeTopic.id);
+  }
+
+  function handlePracticeSolved(totalSolved: number) {
+    if (!activeTopic) return;
+    const current = starsMap[activeTopic.id];
+    if (!current?.practice_done && totalSolved >= 3) {
+      setConfettiKey((k) => k + 1);
+    }
+    reportPracticeSolved(activeTopic.id, totalSolved);
   }
 
   function handleHomeworkSubmitted() {
@@ -989,6 +999,7 @@ export default function CourseWorkspace({
                   profile={profile}
                   isTopicCompleted={isTopicDone}
                   onMaterialsChanged={setMaterials}
+                  onProblemSolved={handlePracticeSolved}
                 />
 
                 {!boardMode && (

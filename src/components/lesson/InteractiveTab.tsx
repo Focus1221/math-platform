@@ -54,7 +54,7 @@ interface Props {
   profile: Profile | null;
   isTopicCompleted: boolean;
   onMaterialsChanged: (next: Material[]) => void;
-  onProblemSolved?: () => void;
+  onProblemSolved?: (totalSolved: number) => void;
 }
 
 export default function InteractiveTab({
@@ -119,7 +119,7 @@ export default function InteractiveTab({
     if (!profile) return;
 
     if (isCorrect) {
-      onProblemSolved?.();
+      onProblemSolved?.(nextCorrect);
     }
 
     await supabase.from('topic_progress').upsert({
