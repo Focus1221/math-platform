@@ -1,5 +1,4 @@
 'use client';
-
 import { playSound } from '@/lib/audio/sound';
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -23,6 +22,7 @@ type SimId =
   | 'diagrams'
   | 'generator';
 
+// 3. Добавь 2 кнопки в массив SIMULATORS:
 const SIMULATORS: { id: SimId; name: string; icon: string }[] = [
   { id: 'coord_ray', name: 'Координатный луч', icon: '📏' },
   { id: 'divisibility', name: 'Блиц: Делимость', icon: '⚡' },
@@ -34,6 +34,7 @@ const SIMULATORS: { id: SimId; name: string; icon: string }[] = [
   { id: 'generator', name: 'Генератор задач', icon: '🎲' },
 ];
 
+// 4. Обнови resolveDefaultSim:
 function resolveDefaultSim(simType: string): SimId {
   const direct: SimId[] = [
     'coord_ray',
@@ -68,9 +69,7 @@ export default function InteractiveTab({
 }: Props) {
   const supabase = createClient();
 
-  const [activeSim, setActiveSim] = useState<SimId>(() =>
-    resolveDefaultSim(topic.sim_type)
-  );
+  const [activeSim, setActiveSim] = useState<SimId>(() => resolveDefaultSim(topic.sim_type));
   const [correctCount, setCorrectCount] = useState(0);
   const [streak, setStreak] = useState(0);
 
@@ -109,7 +108,6 @@ export default function InteractiveTab({
     const nextStreak = isCorrect ? streak + 1 : 0;
     setCorrectCount(nextCorrect);
     setStreak(nextStreak);
-
     if (isCorrect) {
       playSound(nextStreak > 0 && nextStreak % 5 === 0 ? 'celebrate' : 'success');
     } else {
@@ -117,7 +115,6 @@ export default function InteractiveTab({
     }
 
     if (!profile) return;
-
     if (isCorrect) {
       onProblemSolved?.(nextCorrect);
     }
@@ -177,17 +174,13 @@ export default function InteractiveTab({
               Интерактивная лаборатория
             </h3>
             <p className="text-xs text-slate-500">
-              Реши 3 примера верно, чтобы зажечь звезду тренажёра ⭐ и получить +35 XP.
+              Тренажёр подобран под текущую тему, но можно открыть любую песочницу.
             </p>
           </div>
           <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-semibold">
-            <span className="text-emerald-800">
-              🏆 Решено: <strong>{correctCount}</strong>
-            </span>
+            <span className="text-emerald-800">🏆 Решено: <strong>{correctCount}</strong></span>
             <span className="text-emerald-300">|</span>
-            <span className="text-amber-700">
-              🔥 Серия: <strong>{streak}</strong>
-            </span>
+            <span className="text-amber-700">🔥 Серия: <strong>{streak}</strong></span>
           </div>
         </div>
 
@@ -217,10 +210,7 @@ export default function InteractiveTab({
           {activeSim === 'angles' && <ProtractorSim onResult={handleSimResult} />}
           {activeSim === 'sets' && <SetsVennSim />}
           {activeSim === 'generator' && (
-            <TaskGeneratorSim
-              initialSimType={topic.sim_type}
-              onResult={handleSimResult}
-            />
+            <TaskGeneratorSim initialSimType={topic.sim_type} onResult={handleSimResult} />
           )}
         </div>
       </div>
@@ -243,10 +233,7 @@ export default function InteractiveTab({
         ) : (
           <div className="space-y-4">
             {embeds.map((em) => (
-              <div
-                key={em.id}
-                className="rounded-2xl border border-slate-200 overflow-hidden bg-white"
-              >
+              <div key={em.id} className="rounded-2xl border border-slate-200 overflow-hidden bg-white">
                 <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between gap-2 text-xs font-bold">
                   <span>{em.title}</span>
                   <div className="flex items-center gap-3">
@@ -270,12 +257,7 @@ export default function InteractiveTab({
                   </div>
                 </div>
                 <div className="aspect-video bg-slate-100">
-                  <iframe
-                    src={em.url || ''}
-                    className="w-full h-full border-0"
-                    allowFullScreen
-                    loading="lazy"
-                  />
+                  <iframe src={em.url || ''} className="w-full h-full border-0" allowFullScreen loading="lazy" />
                 </div>
               </div>
             ))}
@@ -283,10 +265,7 @@ export default function InteractiveTab({
         )}
 
         {canEdit && (
-          <form
-            onSubmit={handleAddEmbed}
-            className="pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-2.5"
-          >
+          <form onSubmit={handleAddEmbed} className="pt-3 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-2.5">
             <input
               type="text"
               required

@@ -1,74 +1,206 @@
-/* Полупрозрачные белые и серые карточки на слайдах и в конспекте */
-  [data-theme="cosmos"] .bg-white\/50,
-  [data-theme="cosmos"] .bg-white\/60,
-  [data-theme="cosmos"] .bg-white\/65,
-  [data-theme="cosmos"] .bg-white\/75,
-  [data-theme="cosmos"] .bg-white\/85,
-  [data-theme="cosmos"] [class*="bg-slate-50/"],
-  [data-theme="cosmos"] .bg-gray-50,
-  [data-theme="cosmos"] [class*="bg-gray-50/"],
-  [data-theme="cosmos"] .bg-zinc-50,
-  [data-theme="cosmos"] .bg-neutral-50 {
+@import "tailwindcss";
+
+:root,
+[data-theme="bright"] {
+  --surface-bg: #F5F7FF;
+  --surface-mesh:
+    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.12) 0px, transparent 48%),
+    radial-gradient(at 100% 0%, rgba(245, 158, 11, 0.11) 0px, transparent 44%),
+    radial-gradient(at 50% 100%, rgba(16, 185, 129, 0.08) 0px, transparent 50%);
+  --surface-card: #FFFFFF;
+  --ink-main: #0F172A;
+}
+
+[data-theme="mint"] {
+  --surface-bg: #F2FBF7;
+  --surface-mesh:
+    radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.15) 0px, transparent 48%),
+    radial-gradient(at 100% 10%, rgba(14, 165, 233, 0.12) 0px, transparent 45%),
+    radial-gradient(at 50% 100%, rgba(99, 102, 241, 0.07) 0px, transparent 50%);
+  --surface-card: #FFFFFF;
+  --ink-main: #0F172A;
+}
+
+[data-theme="cosmos"] {
+  --surface-bg: #0B1020;
+  --surface-mesh:
+    radial-gradient(at 10% 0%, rgba(99, 102, 241, 0.22) 0px, transparent 48%),
+    radial-gradient(at 90% 10%, rgba(139, 92, 246, 0.18) 0px, transparent 44%),
+    radial-gradient(at 50% 100%, rgba(16, 185, 129, 0.12) 0px, transparent 50%);
+  --surface-card: #131B31;
+  --ink-main: #F1F5F9;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--surface-bg);
+  background-image: var(--surface-mesh);
+  background-attachment: fixed;
+  color: var(--ink-main);
+  transition: background-color 0.25s ease, color 0.2s ease;
+}
+
+/* Живые объёмные кнопки */
+.btn-tactile {
+  border-bottom-width: 3px;
+  transition: transform 0.12s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btn-tactile:active:not(:disabled) {
+  transform: translateY(2px);
+}
+
+/* Плавный «воздушный» подъём интерактивных карточек */
+.card-lift {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.card-lift:hover {
+  transform: translateY(-2px);
+}
+
+@keyframes shake-soft {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-3px); }
+  80% { transform: translateX(3px); }
+}
+
+.animate-shake {
+  animation: shake-soft 0.35s ease-in-out;
+}
+
+@keyframes pop-in {
+  0% { transform: scale(0.95); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.animate-pop {
+  animation: pop-in 0.22s ease-out;
+}
+
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-4px); }
+}
+
+.animate-float {
+  animation: float-slow 3.5s ease-in-out infinite;
+}
+
+/* Сквозная адаптация тёмной темы «Космос» (только на экране, не ломает печать A4) */
+@media screen {
+  [data-theme="cosmos"] .bg-white {
+    background-color: #131B31;
+  }
+  [data-theme="cosmos"] .bg-white\/95,
+  [data-theme="cosmos"] .bg-white\/90 {
+    background-color: rgba(15, 23, 42, 0.9);
+  }
+  [data-theme="cosmos"] [class*="bg-[#F6F7FB]"],
+  [data-theme="cosmos"] [class*="bg-[#F4F7FB]"] {
+    background-color: transparent;
+  }
+  [data-theme="cosmos"] .bg-slate-50 {
     background-color: #1A2440;
   }
-
-  [data-theme="cosmos"] [class*="bg-slate-100/"],
-  [data-theme="cosmos"] .bg-gray-100,
-  [data-theme="cosmos"] [class*="bg-gray-100/"],
-  [data-theme="cosmos"] [class*="bg-slate-200/"] {
+  [data-theme="cosmos"] .bg-slate-100,
+  [data-theme="cosmos"] .bg-slate-100\/90 {
     background-color: #202C4C;
   }
-
-  /* Светлые градиенты карточек (from-*-50 и from-white) */
-  [data-theme="cosmos"] .from-white,
-  [data-theme="cosmos"] [class*="from-white/"],
-  [data-theme="cosmos"] .from-slate-50,
-  [data-theme="cosmos"] [class*="from-slate-50/"],
-  [data-theme="cosmos"] .from-slate-100,
-  [data-theme="cosmos"] .from-indigo-50,
-  [data-theme="cosmos"] [class*="from-indigo-50/"],
-  [data-theme="cosmos"] .from-violet-50,
-  [data-theme="cosmos"] [class*="from-violet-50/"],
-  [data-theme="cosmos"] .from-emerald-50,
-  [data-theme="cosmos"] [class*="from-emerald-50/"],
-  [data-theme="cosmos"] .from-teal-50,
-  [data-theme="cosmos"] .from-sky-50,
-  [data-theme="cosmos"] [class*="from-sky-50/"],
-  [data-theme="cosmos"] .from-amber-50,
-  [data-theme="cosmos"] [class*="from-amber-50/"],
-  [data-theme="cosmos"] .from-rose-50,
-  [data-theme="cosmos"] [class*="from-rose-50/"] {
-    background-image: none;
-    background-color: #1A2440;
+  [data-theme="cosmos"] .bg-slate-200 {
+    background-color: #2A385E;
   }
-
-  /* Полупрозрачные цветные плашки (/50, /60, /70, /80) */
-  [data-theme="cosmos"] [class*="bg-indigo-50/"],
-  [data-theme="cosmos"] [class*="bg-indigo-100/"] {
-    background-color: rgba(99, 102, 241, 0.2);
+  [data-theme="cosmos"] .border-slate-200,
+  [data-theme="cosmos"] .border-slate-200\/80,
+  [data-theme="cosmos"] .border-slate-200\/70,
+  [data-theme="cosmos"] .border-slate-300 {
+    border-color: #2A385E;
   }
-  [data-theme="cosmos"] [class*="bg-emerald-50/"],
-  [data-theme="cosmos"] [class*="bg-emerald-100/"] {
-    background-color: rgba(16, 185, 129, 0.18);
+  [data-theme="cosmos"] .border-slate-100 {
+    border-color: #1F2B49;
   }
-  [data-theme="cosmos"] [class*="bg-amber-50/"],
-  [data-theme="cosmos"] [class*="bg-amber-100/"] {
-    background-color: rgba(245, 158, 11, 0.18);
+  [data-theme="cosmos"] .text-slate-900 {
+    color: #F8FAFC;
   }
-  [data-theme="cosmos"] [class*="bg-sky-50/"],
-  [data-theme="cosmos"] [class*="bg-sky-100/"] {
-    background-color: rgba(14, 165, 233, 0.18);
+  [data-theme="cosmos"] .text-slate-800 {
+    color: #E2E8F0;
   }
-  [data-theme="cosmos"] [class*="bg-violet-50/"],
-  [data-theme="cosmos"] [class*="bg-violet-100/"] {
-    background-color: rgba(139, 92, 246, 0.22);
+  [data-theme="cosmos"] .text-slate-700 {
+    color: #CBD5E1;
   }
-  [data-theme="cosmos"] [class*="bg-rose-50/"],
-  [data-theme="cosmos"] [class*="bg-rose-100/"] {
-    background-color: rgba(244, 63, 94, 0.2);
+  [data-theme="cosmos"] .text-slate-600 {
+    color: #94A3B8;
   }
-
-  /* Более яркие заголовки indigo-600 на тёмных карточках */
-  [data-theme="cosmos"] .text-indigo-600 {
-    color: #818CF8;
+  [data-theme="cosmos"] .text-slate-500 {
+    color: #94A3B8;
   }
+  [data-theme="cosmos"] .bg-indigo-50,
+  [data-theme="cosmos"] .bg-indigo-50\/70,
+  [data-theme="cosmos"] .bg-indigo-50\/50 {
+    background-color: rgba(99, 102, 241, 0.16);
+  }
+  [data-theme="cosmos"] .bg-emerald-50,
+  [data-theme="cosmos"] .bg-emerald-50\/90,
+  [data-theme="cosmos"] .bg-emerald-50\/70 {
+    background-color: rgba(16, 185, 129, 0.15);
+  }
+  [data-theme="cosmos"] .bg-amber-50,
+  [data-theme="cosmos"] .bg-amber-50\/40 {
+    background-color: rgba(245, 158, 11, 0.14);
+  }
+  [data-theme="cosmos"] .bg-sky-50,
+  [data-theme="cosmos"] .bg-sky-50\/60 {
+    background-color: rgba(14, 165, 233, 0.14);
+  }
+  [data-theme="cosmos"] .bg-rose-50 {
+    background-color: rgba(244, 63, 94, 0.16);
+  }
+  [data-theme="cosmos"] .text-indigo-900,
+  [data-theme="cosmos"] .text-indigo-800,
+  [data-theme="cosmos"] .text-indigo-700 {
+    color: #C7D2FE;
+  }
+  [data-theme="cosmos"] .text-emerald-950,
+  [data-theme="cosmos"] .text-emerald-900,
+  [data-theme="cosmos"] .text-emerald-800,
+  [data-theme="cosmos"] .text-emerald-700 {
+    color: #A7F3D0;
+  }
+  [data-theme="cosmos"] .text-amber-900,
+  [data-theme="cosmos"] .text-amber-800 {
+    color: #FDE68A;
+  }
+  [data-theme="cosmos"] .text-sky-800,
+  [data-theme="cosmos"] .text-sky-700 {
+    color: #BAE6FD;
+  }
+  [data-theme="cosmos"] .border-indigo-200,
+  [data-theme="cosmos"] .border-indigo-100 {
+    border-color: rgba(129, 140, 248, 0.35);
+  }
+  [data-theme="cosmos"] .border-emerald-200,
+  [data-theme="cosmos"] .border-emerald-300 {
+    border-color: rgba(52, 211, 153, 0.38);
+  }
+  [data-theme="cosmos"] .border-amber-200,
+  [data-theme="cosmos"] .border-amber-300 {
+    border-color: rgba(251, 191, 36, 0.38);
+  }
+  [data-theme="cosmos"] .border-sky-200 {
+    border-color: rgba(56, 189, 248, 0.35);
+  }
+  [data-theme="cosmos"] input,
+  [data-theme="cosmos"] textarea,
+  [data-theme="cosmos"] select {
+    color: #F1F5F9;
+  }
+  [data-theme="cosmos"] option {
+    background-color: #131B31;
+    color: #F1F5F9;
+  }
+}
