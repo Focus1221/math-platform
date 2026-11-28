@@ -18,6 +18,10 @@ import {
   type BoardViewMode,
   type Point,
 } from './board/boardTypes';
+import BoardGeoTools, {
+  snapPointToRulerEdge,
+  type RulerState,
+} from './board/BoardGeoTools';
 import type { Material, Topic } from '@/types/db';
 
 interface LaserSample {
@@ -83,6 +87,17 @@ export default function BoardDrawOverlay({
   const [shadeOpen, setShadeOpen] = useState<boolean>(false);
   const [shadeTopPct, setShadeTopPct] = useState<number>(52);
   const [toolbarMinimized, setToolbarMinimized] = useState<boolean>(false);
+
+  // Чертёжные инструменты
+  const [showRuler, setShowRuler] = useState<boolean>(false);
+  const [showProtractor, setShowProtractor] = useState<boolean>(false);
+  const [showCompass, setShowCompass] = useState<boolean>(false);
+  const [ruler, setRuler] = useState<RulerState>({
+    x: 120,
+    y: 180,
+    angle: 0,
+    length: 392, // ровно 14 см по сетке 28px
+  });
 
   const [savingToLesson, setSavingToLesson] = useState<boolean>(false);
   const [toast, setToast] = useState<string>('');
@@ -263,7 +278,6 @@ export default function BoardDrawOverlay({
 
   function setPageBg(nextBg: BoardBg) {
     playSound('click');
-    // Автоподбор контрастного цвета при переходе на тёмную меловую доску и обратно
     if (nextBg === 'chalk' && color === '#0F172A') {
       setColor('#FFFFFF');
     } else if (nextBg !== 'chalk' && color === '#FFFFFF') {
@@ -348,6 +362,24 @@ export default function BoardDrawOverlay({
     updateCurrentPageElements(() => [], true);
   }
 
+  function handleDrawCompassCircle(center: Point, radius: number) {
+    playSound('success');
+    updateCurrentPageElements(
+      (els) => [
+        ...els,
+        {
+          id: `el-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          kind: 'circle',
+          color,
+          width,
+          start: center,
+          end: { x: center.x + radius, y: center.y },
+        },
+      ],
+      true
+    );
+  }
+
   // Горячие клавиши Ctrl+Z / Ctrl+Y
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -384,10 +416,15 @@ export default function BoardDrawOverlay({
     e.currentTarget.setPointerCapture(e.pointerId);
     pointerDownRef.current = true;
 
-    const rawPt = getRelativePoint(e);
+    const basePt = getRelativePoint(e);
+    const rulerSnap =
+      showRuler && (tool === 'pen' || tool === 'highlighter' || tool === 'line')
+        ? snapPointToRulerEdge(basePt, ruler)
+        : { snapped: basePt, onEdge: false };
+    const rawPt = rulerSnap.snapped;
 
     if (tool === 'laser') {
-      laserTrailRef.current.push({ x: rawPt.x, y: rawPt.y, t: performance.now() });
+      laserTrailRef.current.push({ x: basePt.x, y: basePt.y, t: performance.now() });
       ensureLaserLoop();
       return;
     }
@@ -396,7 +433,7 @@ export default function BoardDrawOverlay({
       const cur = pagesRef.current[safePageIdxRef.current];
       eraseSnapshotRef.current = cur ? cur.elements : [];
       erasedDuringDragRef.current = false;
-      eraseAtPoint(rawPt);
+      eraseAtPoint(basePt);
       return;
     }
 
@@ -418,14 +455,16 @@ export default function BoardDrawOverlay({
       tool === 'rect' ||
       tool === 'circle'
     ) {
-      const snapped = snapPoint(rawPt, shouldSnapShapes);
+      const finalPt = rulerSnap.onEdge
+        ? rawPt
+        : snapPoint(rawPt, shouldSnapShapes);
       activeDraftRef.current = {
         id: `el-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         kind: tool,
         color,
         width,
-        start: snapped,
-        end: snapped,
+        start: finalPt,
+        end: finalPt,
       };
       redrawLive();
     }
@@ -444,16 +483,21 @@ export default function BoardDrawOverlay({
 
   function handlePointerMove(e: React.PointerEvent<HTMLCanvasElement>) {
     if (!pointerDownRef.current) return;
-    const rawPt = getRelativePoint(e);
+    const basePt = getRelativePoint(e);
+    const rulerSnap =
+      showRuler && (tool === 'pen' || tool === 'highlighter' || tool === 'line')
+        ? snapPointToRulerEdge(basePt, ruler)
+        : { snapped: basePt, onEdge: false };
+    const rawPt = rulerSnap.snapped;
 
     if (tool === 'laser') {
-      laserTrailRef.current.push({ x: rawPt.x, y: rawPt.y, t: performance.now() });
+      laserTrailRef.current.push({ x: basePt.x, y: basePt.y, t: performance.now() });
       ensureLaserLoop();
       return;
     }
 
     if (tool === 'eraser') {
-      eraseAtPoint(rawPt);
+      eraseAtPoint(basePt);
       return;
     }
 
@@ -469,8 +513,7 @@ export default function BoardDrawOverlay({
       return;
     }
 
-    const snapped = snapPoint(rawPt, shouldSnapShapes);
-    draft.end = snapped;
+    draft.end = rulerSnap.onEdge ? rawPt : snapPoint(rawPt, shouldSnapShapes);
     redrawLive();
   }
 
@@ -640,7 +683,7 @@ export default function BoardDrawOverlay({
 
   return (
     <>
-      {/* Рабочая область холста (всегда ниже шапки h-16, чтобы не перекрывать навигацию) */}
+      {/* Рабочая область холста (ниже шапки h-16, чтобы не перекрывать навигацию) */}
       <div
         ref={containerRef}
         className={`${containerClass} ${
@@ -669,7 +712,20 @@ export default function BoardDrawOverlay({
           }`}
         />
 
-        {/* Индикатор листа и тост в правом верхнем углу доски */}
+        {/* Чертёжные инструменты: линейка, транспортир, циркуль */}
+        <BoardGeoTools
+          showRuler={showRuler}
+          showProtractor={showProtractor}
+          showCompass={showCompass}
+          ruler={ruler}
+          onRulerChange={setRuler}
+          onCloseRuler={() => setShowRuler(false)}
+          onCloseProtractor={() => setShowProtractor(false)}
+          onCloseCompass={() => setShowCompass(false)}
+          onDrawCompassCircle={handleDrawCompassCircle}
+        />
+
+        {/* Листы и фоны доски */}
         {viewMode !== 'glass' && (
           <div className="absolute top-3 left-3 z-20 flex flex-wrap items-center gap-1.5 pointer-events-auto">
             <div className="flex items-center gap-1 px-2 py-1 rounded-xl bg-slate-900/85 text-white backdrop-blur text-[11px] font-bold shadow-md">
@@ -712,7 +768,6 @@ export default function BoardDrawOverlay({
               )}
             </div>
 
-            {/* Переключатель фона листа */}
             <div className="flex items-center gap-1 p-1 rounded-xl bg-slate-900/85 text-white backdrop-blur text-[11px] font-bold shadow-md">
               {BG_OPTIONS.map((b) => (
                 <button
@@ -740,7 +795,7 @@ export default function BoardDrawOverlay({
           </div>
         )}
 
-        {/* Шторка-занавес (как в mozaBook / SMART Notebook) */}
+        {/* Шторка-занавес */}
         {shadeOpen && (
           <div
             style={{ top: `${shadeTopPct}%` }}
@@ -794,7 +849,6 @@ export default function BoardDrawOverlay({
           <div className="bg-slate-900/95 text-white backdrop-blur-md rounded-2xl shadow-2xl border border-slate-700 px-2.5 py-2 space-y-2">
             {/* Верхний ряд: Режим экрана + Инструменты рисования */}
             <div className="flex flex-wrap items-center justify-center gap-1.5">
-              {/* Режим: Стекло / Сплит / Доска */}
               <div className="flex items-center gap-0.5 bg-slate-800 p-0.5 rounded-xl">
                 {VIEW_MODES.map((m) => (
                   <button
@@ -814,7 +868,6 @@ export default function BoardDrawOverlay({
 
               <div className="h-5 w-px bg-slate-700 hidden sm:block" />
 
-              {/* Инструменты */}
               <div className="flex flex-wrap items-center justify-center gap-1">
                 {TOOLS.filter((t) => !t.glassOnly || viewMode === 'glass').map((t) => {
                   const active = tool === t.id;
@@ -840,9 +893,8 @@ export default function BoardDrawOverlay({
               </div>
             </div>
 
-            {/* Нижний ряд: Цвета, толщина, сетка, шторка, история, сохранение */}
+            {/* Нижний ряд: Цвета, толщина, сетка, шторка, чертёжные инструменты, история, сохранение */}
             <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1 border-t border-slate-800">
-              {/* Палитра цветов */}
               <div className="flex items-center gap-1">
                 {BOARD_COLORS.map((c) => (
                   <button
@@ -865,7 +917,6 @@ export default function BoardDrawOverlay({
                 ))}
               </div>
 
-              {/* Толщина */}
               <div className="flex items-center gap-0.5 bg-slate-800 p-0.5 rounded-xl">
                 {BOARD_WIDTHS.map((w) => (
                   <button
@@ -883,7 +934,6 @@ export default function BoardDrawOverlay({
                 ))}
               </div>
 
-              {/* Прилипание фигур к сетке */}
               {viewMode !== 'glass' && (
                 <button
                   type="button"
@@ -902,7 +952,6 @@ export default function BoardDrawOverlay({
                 </button>
               )}
 
-              {/* Шторка */}
               <button
                 type="button"
                 title="Шторка для постепенного открытия решения"
@@ -918,6 +967,55 @@ export default function BoardDrawOverlay({
               >
                 🪟 Шторка
               </button>
+
+              {/* Геометрические инструменты */}
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  title="Линейка (рисуй ровно вдоль верхнего края)"
+                  onClick={() => {
+                    playSound('click');
+                    setShowRuler((v) => !v);
+                  }}
+                  className={`px-2 py-1 rounded-xl text-[11px] font-bold transition ${
+                    showRuler
+                      ? 'bg-amber-400 text-slate-950'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+                  }`}
+                >
+                  📏
+                </button>
+                <button
+                  type="button"
+                  title="Транспортир"
+                  onClick={() => {
+                    playSound('click');
+                    setShowProtractor((v) => !v);
+                  }}
+                  className={`px-2 py-1 rounded-xl text-[11px] font-bold transition ${
+                    showProtractor
+                      ? 'bg-sky-400 text-slate-950'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+                  }`}
+                >
+                  📐
+                </button>
+                <button
+                  type="button"
+                  title="Циркуль"
+                  onClick={() => {
+                    playSound('click');
+                    setShowCompass((v) => !v);
+                  }}
+                  className={`px-2 py-1 rounded-xl text-[11px] font-bold transition ${
+                    showCompass
+                      ? 'bg-indigo-400 text-slate-950'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+                  }`}
+                >
+                  🧭
+                </button>
+              </div>
 
               <div className="h-5 w-px bg-slate-700 hidden sm:block" />
 

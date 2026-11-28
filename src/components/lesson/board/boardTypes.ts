@@ -213,7 +213,7 @@ export function drawBoardElement(
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
- if ('points' in el) {
+  if ('points' in el) {
     const pts = el.points;
     if (pts.length === 0) {
       ctx.restore();

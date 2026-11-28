@@ -1,0 +1,4327 @@
+===== src/components/teacher/JournalClient.tsx =====
+'use client';
+
+import { useMemo, useState } from 'react';
+import Link from 'next/link';
+
+export interface ClassroomRow {
+  id: string;
+  name: string;
+  join_code: string;
+  grade_number: number;
+}
+
+export interface StudentRow {
+  id: string;
+  full_name: string;
+  email: string;
+  classroom_id: string | null;
+  login_username?: string | null;
+  pin_code?: string | null;
+}
+
+export interface JournalCourse {
+  id: string;
+  title: string;
+  grade_number: number;
+}
+
+export interface JournalTopic {
+  id: string;
+  course_id: string;
+  order_index: number;
+  quarter: number;
+  title: string;
+  is_assessment: boolean;
+  maxPoints: number;
+}
+
+export interface ProgressEntry {
+  student_id: string;
+  topic_id: string;
+  completed: boolean;
+  sim_correct_count: number;
+}
+
+export interface TopicScoreEntry {
+  student_id: string;
+  topic_id: string;
+  score: number;
+}
+
+interface TopicHeatStats {
+  topic: JournalTopic;
+  submittedCount: number;
+  completedCount: number;
+  avgPct: number | null;
+  lowStudents: { id: string; name: string; score: number }[];
+  level: 'none' | 'good' | 'warn' | 'gap';
+}
+
+interface Props {
+  initialClassrooms: ClassroomRow[];
+  initialStudents: StudentRow[];
+  courses: JournalCourse[];
+  topics: JournalTopic[];
+  progressList: ProgressEntry[];
+  topicScores: TopicScoreEntry[];
+}
+
+function getScoreBadgeClasses(score: number, maxPoints: number, heatmapOn: boolean): string {
+  if (!heatmapOn || maxPoints <= 0) {
+    return 'bg-indigo-100 text-indigo-800';
+  }
+  const pct = (score / maxPoints) * 100;
+  if (pct >= 80) return 'bg-emerald-100 text-emerald-800 border border-emerald-300';
+  if (pct >= 50) return 'bg-amber-100 text-amber-800 border border-amber-300';
+  return 'bg-rose-100 text-rose-800 border border-rose-300';
+}
+
+export default function JournalClient({
+  initialClassrooms,
+  initialStudents,
+  courses,
+  topics,
+  progressList,
+  topicScores,
+}: Props) {
+  const [tab, setTab] = useState<'matrix' | 'classes'>('matrix');
+  const [classrooms, setClassrooms] = useState<ClassroomRow[]>(initialClassrooms);
+  const [students, setStudents] = useState<StudentRow[]>(initialStudents);
+
+  // Фильтры матрицы и тепловой карты
+  const [selectedClassId, setSelectedClassId] = useState<string>('all');
+  const [selectedCourseId, setSelectedCourseId] = useState<string>(courses[0]?.id || '');
+  const [selectedQuarter, setSelectedQuarter] = useState<number>(1);
+  const [heatmapOn, setHeatmapOn] = useState<boolean>(true);
+  const [focusedTopicId, setFocusedTopicId] = useState<string | null>(null);
+
+  // Форма создания класса
+  const [newClassName, setNewClassName] = useState('');
+  const [newClassGrade, setNewClassGrade] = useState(5);
+  const [newClassCode, setNewClassCode] = useState('');
+  const [creatingClass, setCreatingClass] = useState(false);
+
+  // Массовое добавление учеников (логин + PIN)
+  const [bulkClassId, setBulkClassId] = useState<string>(initialClassrooms[0]?.id || '');
+  const [bulkNamesText, setBulkNamesText] = useState('');
+  const [bulkCreating, setBulkCreating] = useState(false);
+  const [bulkNotice, setBulkNotice] = useState('');
+
+  // Уведомление о сброшенном пароле / PIN
+  const [resetResult, setResetResult] = useState<{
+    name: string;
+    subtitle: string;
+    password: string;
+    isPin: boolean;
+  } | null>(null);
+  const [busyStudentId, setBusyStudentId] = useState<string | null>(null);
+
+  const activeBulkClassId = useMemo(() => {
+    if (bulkClassId && classrooms.some((c) => c.id === bulkClassId)) {
+      return bulkClassId;
+    }
+    return classrooms[0]?.id || '';
+  }, [bulkClassId, classrooms]);
+
+  // Быстрые словари для мгновенного рендера таблицы
+  const progressMap = useMemo(() => {
+    const map = new Map<string, ProgressEntry>();
+    for (const p of progressList) {
+      map.set(`${p.student_id}:${p.topic_id}`, p);
+    }
+    return map;
+  }, [progressList]);
+
+  const { scoreMap, submittedSet } = useMemo(() => {
+    const scores = new Map<string, number>();
+    const submitted = new Set<string>();
+    for (const s of topicScores) {
+      const k = `${s.student_id}:${s.topic_id}`;
+      submitted.add(k);
+      scores.set(k, (scores.get(k) || 0) + s.score);
+    }
+    return { scoreMap: scores, submittedSet: submitted };
+  }, [topicScores]);
+
+  const classMap = useMemo(
+    () => new Map(classrooms.map((c) => [c.id, c])),
+    [classrooms]
+  );
+
+  const visibleTopics = useMemo(
+    () =>
+      topics
+        .filter((t) => t.course_id === selectedCourseId && t.quarter === selectedQuarter)
+        .sort((a, b) => a.order_index - b.order_index),
+    [topics, selectedCourseId, selectedQuarter]
+  );
+
+  const visibleStudents = useMemo(() => {
+    return students
+      .filter((s) => {
+        if (selectedClassId === 'all') return true;
+        if (selectedClassId === 'unassigned') return !s.classroom_id;
+        return s.classroom_id === selectedClassId;
+      })
+      .sort((a, b) => a.full_name.localeCompare(b.full_name, 'ru'));
+  }, [students, selectedClassId]);
+
+  // Аналитика пробелов по каждой теме текущей четверти и выборки учеников
+  const topicHeatMap = useMemo(() => {
+    const statsMap = new Map<string, TopicHeatStats>();
+
+    for (const topic of visibleTopics) {
+      let submittedCount = 0;
+      let completedCount = 0;
+      let scoreSum = 0;
+      const lowStudents: { id: string; name: string; score: number }[] = [];
+
+      for (const st of visibleStudents) {
+        const key = `${st.id}:${topic.id}`;
+        const p = progressMap.get(key);
+        if (p?.completed) completedCount++;
+
+        if (topic.maxPoints > 0 && submittedSet.has(key)) {
+          const sc = scoreMap.get(key) || 0;
+          submittedCount++;
+          scoreSum += sc;
+          if ((sc / topic.maxPoints) * 100 < 60) {
+            lowStudents.push({ id: st.id, name: st.full_name, score: sc });
+          }
+        }
+      }
+
+      let avgPct: number | null = null;
+      let level: TopicHeatStats['level'] = 'none';
+
+      if (topic.maxPoints > 0 && submittedCount > 0) {
+        avgPct = Math.round((scoreSum / (submittedCount * topic.maxPoints)) * 100);
+        const lowShare = lowStudents.length / submittedCount;
+        if (avgPct < 55 || lowShare >= 0.5) {
+          level = 'gap';
+        } else if (avgPct < 75 || lowShare >= 0.3) {
+          level = 'warn';
+        } else {
+          level = 'good';
+        }
+      }
+
+      statsMap.set(topic.id, {
+        topic,
+        submittedCount,
+        completedCount,
+        avgPct,
+        lowStudents,
+        level,
+      });
+    }
+
+    return statsMap;
+  }, [visibleTopics, visibleStudents, progressMap, scoreMap, submittedSet]);
+
+  const gapTopics = useMemo(() => {
+    return Array.from(topicHeatMap.values())
+      .filter((item) => item.level === 'gap' || item.level === 'warn')
+      .sort((a, b) => (a.avgPct ?? 100) - (b.avgPct ?? 100));
+  }, [topicHeatMap]);
+
+  const focusedStats = focusedTopicId ? topicHeatMap.get(focusedTopicId) || null : null;
+
+  async function handleCreateClass(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newClassName.trim()) return;
+    setCreatingClass(true);
+    try {
+      const res = await fetch('/api/teacher/classes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newClassName.trim(),
+          gradeNumber: newClassGrade,
+          joinCode: newClassCode.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Не удалось создать класс');
+        return;
+      }
+      const created = data.classroom as ClassroomRow;
+      setClassrooms((prev) => [...prev, created]);
+      if (!bulkClassId) setBulkClassId(created.id);
+      setNewClassName('');
+      setNewClassCode('');
+    } finally {
+      setCreatingClass(false);
+    }
+  }
+
+  async function handleDeleteClass(cls: ClassroomRow) {
+    if (
+      !confirm(
+        `Удалить класс ${cls.name}? Ученики не удалятся, но перейдут в «Без класса».`
+      )
+    ) {
+      return;
+    }
+    const res = await fetch(`/api/teacher/classes?id=${cls.id}`, {
+      method: 'DELETE',
+    });
+    if (res.ok) {
+      setClassrooms((prev) => prev.filter((c) => c.id !== cls.id));
+      setStudents((prev) =>
+        prev.map((s) => (s.classroom_id === cls.id ? { ...s, classroom_id: null } : s))
+      );
+      if (selectedClassId === cls.id) setSelectedClassId('all');
+    }
+  }
+
+  async function handleBulkAddStudents(e: React.FormEvent) {
+    e.preventDefault();
+    if (!activeBulkClassId || !bulkNamesText.trim()) return;
+    setBulkCreating(true);
+    setBulkNotice('');
+    try {
+      const res = await fetch('/api/teacher/bulk-students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          classroomId: activeBulkClassId,
+          namesText: bulkNamesText,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Не удалось добавить учеников');
+        return;
+      }
+      const added = (data.created || []) as StudentRow[];
+      if (added.length > 0) {
+        setStudents((prev) => [...prev, ...added]);
+        setBulkNamesText('');
+        setBulkNotice(
+          `Создано учеников: ${added.length}. Теперь можно сразу нажать «🖨️ Карточки A4» у выбранного класса!`
+        );
+      }
+      if (Array.isArray(data.failed) && data.failed.length > 0) {
+        alert(
+          `Не удалось создать (${data.failed.length}): ` +
+            data.failed
+              .map((f: { name: string; reason: string }) => `${f.name} (${f.reason})`)
+              .join(', ')
+        );
+      }
+    } finally {
+      setBulkCreating(false);
+    }
+  }
+
+  async function handleAssignClass(studentId: string, classroomId: string) {
+    setBusyStudentId(studentId);
+    try {
+      const nextId = classroomId || null;
+      const res = await fetch('/api/teacher/classes', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId, classroomId: nextId }),
+      });
+      if (res.ok) {
+        setStudents((prev) =>
+          prev.map((s) => (s.id === studentId ? { ...s, classroom_id: nextId } : s))
+        );
+      }
+    } finally {
+      setBusyStudentId(null);
+    }
+  }
+
+  async function handleResetPassword(student: StudentRow) {
+    const label = student.login_username ? 'PIN-код' : 'пароль';
+    if (!confirm(`Сбросить ${label} ученику ${student.full_name}?`)) return;
+    setBusyStudentId(student.id);
+    try {
+      const res = await fetch('/api/teacher/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId: student.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Ошибка сброса пароля');
+        return;
+      }
+
+      const isPin = Boolean(data.isPin);
+      if (isPin) {
+        setStudents((prev) =>
+          prev.map((s) =>
+            s.id === student.id ? { ...s, pin_code: data.tempPassword } : s
+          )
+        );
+      }
+
+      setResetResult({
+        name: student.full_name,
+        subtitle: isPin
+          ? `логин: ${data.loginUsername || student.login_username}`
+          : student.email,
+        password: data.tempPassword,
+        isPin,
+      });
+    } finally {
+      setBusyStudentId(null);
+    }
+  }
+
+  async function handleRenameStudent(student: StudentRow) {
+    const nextName = prompt('Новое имя и фамилия ученика:', student.full_name);
+    if (!nextName || !nextName.trim() || nextName.trim() === student.full_name) {
+      return;
+    }
+
+    setBusyStudentId(student.id);
+    try {
+      const res = await fetch('/api/teacher/students', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ studentId: student.id, fullName: nextName.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Не удалось переименовать ученика');
+        return;
+      }
+      setStudents((prev) =>
+        prev.map((s) =>
+          s.id === student.id ? { ...s, full_name: data.fullName } : s
+        )
+      );
+    } finally {
+      setBusyStudentId(null);
+    }
+  }
+
+  async function handleDeleteStudent(student: StudentRow) {
+    if (
+      !confirm(
+        `Удалить аккаунт ученика «${student.full_name}» вместе со всеми его баллами и работами?`
+      )
+    ) {
+      return;
+    }
+
+    setBusyStudentId(student.id);
+    try {
+      const res = await fetch(`/api/teacher/students?id=${student.id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Не удалось удалить ученика');
+        return;
+      }
+      setStudents((prev) => prev.filter((s) => s.id !== student.id));
+    } finally {
+      setBusyStudentId(null);
+    }
+  }
+
+  function exportCsv() {
+    const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
+    const headers = [
+      'Ученик',
+      'Класс',
+      'Пройдено тем',
+      'Баллы ДЗ',
+      'Решено в тренажёрах',
+      ...visibleTopics.map((t) => `№${t.order_index} ${t.title}`),
+    ];
+
+    const rows = visibleStudents.map((st) => {
+      let doneCount = 0;
+      let totalScore = 0;
+      let totalSim = 0;
+
+      const cells = visibleTopics.map((t) => {
+        const key = `${st.id}:${t.id}`;
+        const p = progressMap.get(key);
+        const sc = scoreMap.get(key) || 0;
+        const hasSub = submittedSet.has(key);
+        if (p?.completed) doneCount++;
+        totalScore += sc;
+        totalSim += p?.sim_correct_count || 0;
+
+        if (t.maxPoints > 0 && hasSub) return `${sc}/${t.maxPoints}`;
+        if (p?.completed) return '✓';
+        return '';
+      });
+
+      const clsName = st.classroom_id
+        ? classMap.get(st.classroom_id)?.name || ''
+        : 'Без класса';
+      return [st.full_name, clsName, doneCount, totalScore, totalSim, ...cells]
+        .map(esc)
+        .join(';');
+    });
+
+    const csv = '\uFEFF' + [headers.map(esc).join(';'), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `journal-q${selectedQuarter}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="min-h-screen bg-[#F6F7FB]">
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
+        <div className="max-w-[1600px] mx-auto px-4 h-16 flex items-center justify-between gap-3">
+          <div>
+            <h1 className="text-base sm:text-lg font-extrabold text-slate-900">
+              📊 Классы и журнал успеваемости
+            </h1>
+            <p className="text-xs text-slate-500">
+              Классов: <strong>{classrooms.length}</strong> · Учеников:{' '}
+              <strong>{students.length}</strong>
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/teacher/submissions"
+              className="px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition"
+            >
+              📥 Проверка ДЗ
+            </Link>
+            <Link
+              href="/today"
+              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 transition"
+            >
+              ← Сегодня
+            </Link>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-[1600px] mx-auto px-4 py-6 space-y-5">
+        {/* Переключатель разделов */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex p-1 bg-white rounded-xl border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setTab('matrix')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition ${
+                tab === 'matrix' ? 'bg-indigo-600 text-white' : 'text-slate-600'
+              }`}
+            >
+              📊 Сводный журнал
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('classes')}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition ${
+                tab === 'classes' ? 'bg-indigo-600 text-white' : 'text-slate-600'
+              }`}
+            >
+              🏫 Классы и ученики ({students.length})
+            </button>
+          </div>
+
+          {tab === 'matrix' && (
+            <button
+              type="button"
+              onClick={exportCsv}
+              className="btn-tactile px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 text-white text-xs font-bold shadow-xs transition"
+            >
+              ⬇ Скачать таблицу (Excel / CSV)
+            </button>
+          )}
+        </div>
+
+        {/* Баннер с новым паролем или PIN */}
+        {resetResult && (
+          <div className="p-4 rounded-2xl bg-emerald-50 border-2 border-emerald-300 flex flex-wrap items-center justify-between gap-3 animate-pop">
+            <div className="text-xs sm:text-sm text-emerald-950 space-y-0.5">
+              <div className="font-extrabold">
+                🔑 {resetResult.isPin ? 'PIN-код обновлён' : 'Пароль обновлён'} для:{' '}
+                {resetResult.name} ({resetResult.subtitle})
+              </div>
+              <div>
+                {resetResult.isPin ? 'Новый PIN-код:' : 'Временный пароль:'}{' '}
+                <code className="px-2 py-0.5 rounded-lg bg-white border border-emerald-300 font-mono text-base font-extrabold text-emerald-800">
+                  {resetResult.password}
+                </code>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => navigator.clipboard.writeText(resetResult.password)}
+                className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold"
+              >
+                📋 Копировать
+              </button>
+              <button
+                type="button"
+                onClick={() => setResetResult(null)}
+                className="px-3 py-1.5 rounded-xl bg-white border border-emerald-200 text-xs font-bold text-slate-600"
+              >
+                Закрыть
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ВКЛАДКА 1: Сводная матрица + Тепловая карта пробелов */}
+        {tab === 'matrix' && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => {
+                    setSelectedClassId(e.target.value);
+                    setFocusedTopicId(null);
+                  }}
+                  className="px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
+                >
+                  <option value="all">Все классы ({students.length})</option>
+                  {classrooms.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      Класс {c.name} ({c.join_code})
+                    </option>
+                  ))}
+                  <option value="unassigned">Без класса</option>
+                </select>
+
+                <select
+                  value={selectedCourseId}
+                  onChange={(e) => {
+                    setSelectedCourseId(e.target.value);
+                    setFocusedTopicId(null);
+                  }}
+                  className="px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
+                >
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.title}
+                    </option>
+                  ))}
+                </select>
+
+                <div className="inline-flex p-1 bg-slate-100 rounded-xl">
+                  {[1, 2, 3, 4].map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => {
+                        setSelectedQuarter(q);
+                        setFocusedTopicId(null);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                        selectedQuarter === q
+                          ? 'bg-indigo-600 text-white'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {q} четверть
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                {heatmapOn && (
+                  <div className="hidden xl:flex items-center gap-2 text-[11px] font-bold text-slate-500">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-emerald-400" />
+                      ≥80%
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-amber-400" />
+                      50–79%
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-rose-400" />
+                      &lt;50% пробел
+                    </span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHeatmapOn((v) => !v);
+                    setFocusedTopicId(null);
+                  }}
+                  className={`px-3 py-2 rounded-xl border text-xs font-extrabold transition ${
+                    heatmapOn
+                      ? 'bg-rose-50 border-rose-300 text-rose-800'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-indigo-300'
+                  }`}
+                >
+                  {heatmapOn ? '🔥 Тепловая карта: ВКЛ' : '🔥 Тепловая карта: ВЫКЛ'}
+                </button>
+              </div>
+            </div>
+
+            {/* Сводка проблемных тем для повторения перед СОР */}
+            {heatmapOn && visibleStudents.length > 0 && gapTopics.length > 0 && (
+              <div className="bg-white rounded-3xl border-2 border-amber-200 p-4 sm:p-5 space-y-3 animate-pop">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-xs sm:text-sm font-extrabold text-slate-900">
+                      🎯 Темы с пробелами — стоит повторить перед СОР ({gapTopics.length})
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      Нажми на тему, чтобы подсветить столбец в журнале и увидеть список учеников ниже 60%.
+                    </p>
+                  </div>
+                  {focusedTopicId && (
+                    <button
+                      type="button"
+                      onClick={() => setFocusedTopicId(null)}
+                      className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-600"
+                    >
+                      Снять выделение
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {gapTopics.map((item) => {
+                    const isFocused = focusedTopicId === item.topic.id;
+                    const isCritical = item.level === 'gap';
+                    return (
+                      <button
+                        key={item.topic.id}
+                        type="button"
+                        onClick={() =>
+                          setFocusedTopicId((prev) =>
+                            prev === item.topic.id ? null : item.topic.id
+                          )
+                        }
+                        className={`text-left px-3 py-2 rounded-xl border text-xs transition flex items-center gap-2 ${
+                          isFocused
+                            ? 'ring-2 ring-indigo-500 border-indigo-400 bg-indigo-50'
+                            : isCritical
+                              ? 'bg-rose-50 border-rose-200 hover:border-rose-300 text-rose-900'
+                              : 'bg-amber-50 border-amber-200 hover:border-amber-300 text-amber-900'
+                        }`}
+                      >
+                        <span className="font-extrabold">№{item.topic.order_index}</span>
+                        <span className="font-bold max-w-[200px] truncate">
+                          {item.topic.title}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded-md text-[10px] font-extrabold tabular-nums ${
+                            isCritical
+                              ? 'bg-rose-100 text-rose-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          ср. {item.avgPct}%
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {focusedStats && (
+                  <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+                    <div className="font-extrabold text-slate-900">
+                      Урок №{focusedStats.topic.order_index}. {focusedStats.topic.title} — средний результат{' '}
+                      <span className="text-rose-700">{focusedStats.avgPct}%</span> (сдали{' '}
+                      {focusedStats.submittedCount} из {visibleStudents.length} уч.)
+                    </div>
+                    {focusedStats.lowStudents.length > 0 ? (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-slate-500 font-semibold">Нужна помощь:</span>
+                        {focusedStats.lowStudents.map((ls) => (
+                          <span
+                            key={ls.id}
+                            className="px-2 py-0.5 rounded-lg bg-rose-100 text-rose-800 font-bold"
+                          >
+                            {ls.name} ({ls.score}/{focusedStats.topic.maxPoints})
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-slate-500">
+                        У сдавших учеников нет критических провалов, но средний балл ниже 75%.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {visibleStudents.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-slate-200 p-10 text-center text-sm text-slate-500">
+                В выбранном классе пока нет учеников. Перейди во вкладку «Классы и
+                ученики», чтобы создать класс и добавить детей списком.
+              </div>
+            ) : (
+              <div className="bg-white rounded-3xl border border-slate-200 shadow-xs overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200">
+                      <th className="sticky left-0 z-20 bg-slate-50 px-4 py-3 font-extrabold text-slate-800 min-w-[200px] border-r border-slate-200">
+                        Ученик
+                      </th>
+                      <th className="px-3 py-3 font-bold text-slate-600 text-center whitespace-nowrap">
+                        Темы
+                      </th>
+                      <th className="px-3 py-3 font-bold text-slate-600 text-center whitespace-nowrap">
+                        ДЗ (б.)
+                      </th>
+                      <th className="px-3 py-3 font-bold text-slate-600 text-center whitespace-nowrap border-r border-slate-200">
+                        🏆 Симул.
+                      </th>
+                      {visibleTopics.map((t) => {
+                        const st = topicHeatMap.get(t.id);
+                        const isFocused = focusedTopicId === t.id;
+                        let headCls = t.is_assessment
+                          ? 'bg-amber-50 text-amber-800'
+                          : 'text-slate-600';
+                        if (isFocused) {
+                          headCls = 'bg-indigo-100 text-indigo-900';
+                        } else if (heatmapOn && st?.level === 'gap') {
+                          headCls = 'bg-rose-50 text-rose-800';
+                        }
+
+                        return (
+                          <th
+                            key={t.id}
+                            onClick={() =>
+                              setFocusedTopicId((prev) => (prev === t.id ? null : t.id))
+                            }
+                            title={`${t.order_index}. ${t.title}${
+                              st?.avgPct !== null && st?.avgPct !== undefined
+                                ? ` · Ср. балл: ${st.avgPct}%`
+                                : ''
+                            }`}
+                            className={`px-2 py-3 text-center font-bold min-w-[56px] cursor-pointer transition ${headCls}`}
+                          >
+                            <div>№{t.order_index}</div>
+                            {t.is_assessment && (
+                              <div className="text-[9px] font-extrabold text-amber-700">
+                                СОР
+                              </div>
+                            )}
+                            {heatmapOn && st?.level === 'gap' && !t.is_assessment && (
+                              <div className="text-[9px] font-extrabold text-rose-600">
+                                пробел
+                              </div>
+                            )}
+                          </th>
+                        );
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {visibleStudents.map((st) => {
+                      let doneCount = 0;
+                      let totalScore = 0;
+                      let totalSim = 0;
+
+                      const topicCells = visibleTopics.map((t) => {
+                        const key = `${st.id}:${t.id}`;
+                        const p = progressMap.get(key);
+                        const sc = scoreMap.get(key) || 0;
+                        const hasSub = submittedSet.has(key);
+                        if (p?.completed) doneCount++;
+                        totalScore += sc;
+                        totalSim += p?.sim_correct_count || 0;
+                        return { t, p, sc, hasSub };
+                      });
+
+                      const clsName = st.classroom_id
+                        ? classMap.get(st.classroom_id)?.name
+                        : null;
+
+                      return (
+                        <tr key={st.id} className="hover:bg-indigo-50/30 transition">
+                          <td className="sticky left-0 z-10 bg-white px-4 py-2.5 border-r border-slate-200">
+                            <div className="font-bold text-slate-900">
+                              {st.full_name}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              {clsName ? `Класс ${clsName}` : 'Без класса'}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 text-center font-bold text-slate-700 tabular-nums">
+                            {doneCount}/{visibleTopics.length}
+                          </td>
+                          <td className="px-3 py-2.5 text-center font-extrabold text-indigo-700 tabular-nums">
+                            {totalScore}
+                          </td>
+                          <td className="px-3 py-2.5 text-center font-bold text-emerald-700 border-r border-slate-200 tabular-nums">
+                            {totalSim}
+                          </td>
+                          {topicCells.map(({ t, p, sc, hasSub }) => {
+                            const isFocused = focusedTopicId === t.id;
+                            const showScore = t.maxPoints > 0 && (hasSub || sc > 0);
+                            return (
+                              <td
+                                key={t.id}
+                                title={`${t.title} — ${
+                                  p?.completed ? 'Пройдена' : 'Не отмечена'
+                                }${
+                                  showScore
+                                    ? `, ДЗ: ${sc}/${t.maxPoints} (${Math.round(
+                                        (sc / t.maxPoints) * 100
+                                      )}%)`
+                                    : ''
+                                }${
+                                  p?.sim_correct_count
+                                    ? `, тренажёр: ${p.sim_correct_count}`
+                                    : ''
+                                }`}
+                                className={`px-1.5 py-2.5 text-center ${
+                                  isFocused ? 'bg-indigo-50/50' : ''
+                                }`}
+                              >
+                                {showScore ? (
+                                  <span
+                                    className={`inline-block px-1.5 py-0.5 rounded-md font-bold text-[11px] tabular-nums ${getScoreBadgeClasses(
+                                      sc,
+                                      t.maxPoints,
+                                      heatmapOn
+                                    )}`}
+                                  >
+                                    {sc}/{t.maxPoints}
+                                  </span>
+                                ) : p?.completed ? (
+                                  <span className="inline-flex w-5 h-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 font-bold">
+                                    ✓
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-300">·</span>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+
+                  {/* Итоговая полоса тепловой карты по классу */}
+                  {heatmapOn && (
+                    <tfoot>
+                      <tr className="bg-slate-50 border-t-2 border-slate-200">
+                        <td className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 font-extrabold text-slate-700 border-r border-slate-200">
+                          🔥 Ср. усвоение ДЗ
+                        </td>
+                        <td colSpan={3} className="px-3 py-2.5 text-center text-[11px] text-slate-500 border-r border-slate-200">
+                          По сдавшим
+                        </td>
+                        {visibleTopics.map((t) => {
+                          const st = topicHeatMap.get(t.id);
+                          const isFocused = focusedTopicId === t.id;
+                          if (!st || st.avgPct === null) {
+                            return (
+                              <td
+                                key={t.id}
+                                className={`px-1.5 py-2.5 text-center text-[11px] text-slate-400 ${
+                                  isFocused ? 'bg-indigo-50/50' : ''
+                                }`}
+                              >
+                                —
+                              </td>
+                            );
+                          }
+                          const pillCls =
+                            st.level === 'good'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : st.level === 'warn'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-rose-100 text-rose-800';
+                          return (
+                            <td
+                              key={t.id}
+                              onClick={() =>
+                                setFocusedTopicId((prev) => (prev === t.id ? null : t.id))
+                              }
+                              title={`Сдали ${st.submittedCount} из ${visibleStudents.length} уч. · Средний балл: ${st.avgPct}%`}
+                              className={`px-1 py-2.5 text-center cursor-pointer ${
+                                isFocused ? 'bg-indigo-50/50' : ''
+                              }`}
+                            >
+                              <span
+                                className={`inline-block px-1.5 py-0.5 rounded-md text-[10px] font-extrabold tabular-nums ${pillCls}`}
+                              >
+                                {st.avgPct}%
+                              </span>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ВКЛАДКА 2: Управление классами и учениками */}
+        {tab === 'classes' && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+            {/* Левая колонка: классы */}
+            <div className="space-y-4">
+              <form
+                onSubmit={handleCreateClass}
+                className="bg-white rounded-3xl border border-slate-200 p-5 space-y-3"
+              >
+                <h2 className="text-sm font-extrabold text-slate-900">
+                  + Создать класс
+                </h2>
+                <input
+                  type="text"
+                  required
+                  value={newClassName}
+                  onChange={(e) => setNewClassName(e.target.value)}
+                  placeholder="Название (например: 5 «А»)"
+                  className="w-full px-3.5 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={newClassGrade}
+                    onChange={(e) => setNewClassGrade(Number(e.target.value))}
+                    className="px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
+                  >
+                    {[5, 6, 7, 8, 9, 10, 11].map((g) => (
+                      <option key={g} value={g}>
+                        {g} класс
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={newClassCode}
+                    onChange={(e) => setNewClassCode(e.target.value.toUpperCase())}
+                    placeholder="Код (напр. 5A-2026)"
+                    className="px-3 py-2 text-xs uppercase bg-slate-50 border border-slate-200 rounded-xl"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Если поле кода оставить пустым, он сгенерируется автоматически.
+                </p>
+                <button
+                  type="submit"
+                  disabled={creatingClass}
+                  className="btn-tactile w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-xs font-bold transition"
+                >
+                  {creatingClass ? 'Создание...' : 'Создать класс'}
+                </button>
+              </form>
+
+              <div className="space-y-2.5">
+                {classrooms.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-dashed border-slate-300 p-6 text-center text-xs text-slate-500">
+                    Создай первый класс — например, 5 «А» и 5 «Б».
+                  </div>
+                ) : (
+                  classrooms.map((cls) => {
+                    const count = students.filter(
+                      (s) => s.classroom_id === cls.id
+                    ).length;
+                    return (
+                      <div
+                        key={cls.id}
+                        className="bg-white rounded-2xl border border-slate-200 p-4 flex items-start justify-between gap-2"
+                      >
+                        <div>
+                          <div className="text-sm font-extrabold text-slate-900">
+                            {cls.name}
+                          </div>
+                          <div className="text-xs text-slate-500 mt-0.5">
+                            Код:{' '}
+                            <button
+                              type="button"
+                              onClick={() =>
+                                navigator.clipboard.writeText(cls.join_code)
+                              }
+                              className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-mono font-bold hover:bg-indigo-100"
+                              title="Нажми, чтобы скопировать код"
+                            >
+                              {cls.join_code} 📋
+                            </button>{' '}
+                            · {count} уч.
+                          </div>
+                          <div className="mt-2">
+                            <Link
+                              href={`/teacher/cards/${cls.id}`}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-[11px] font-bold transition"
+                            >
+                              🖨️ Карточки A4
+                            </Link>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteClass(cls)}
+                          className="text-xs font-bold text-slate-400 hover:text-rose-600"
+                          title="Удалить класс"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            {/* Правая колонка: массовое добавление и список учеников */}
+            <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-5 space-y-5">
+              {classrooms.length > 0 && (
+                <form
+                  onSubmit={handleBulkAddStudents}
+                  className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-200 space-y-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-sm font-extrabold text-indigo-950">
+                        📋 Добавить учеников списком (вход по логину + PIN)
+                      </h3>
+                      <p className="text-[11px] text-slate-600">
+                        Вставь список фамилий и имён (по одному на строку) — почта
+                        детям не понадобится.
+                      </p>
+                    </div>
+                    <select
+                      value={activeBulkClassId}
+                      onChange={(e) => setBulkClassId(e.target.value)}
+                      className="px-3 py-1.5 text-xs font-bold bg-white border border-indigo-200 rounded-xl"
+                    >
+                      {classrooms.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          Класс {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <textarea
+                    rows={4}
+                    value={bulkNamesText}
+                    onChange={(e) => setBulkNamesText(e.target.value)}
+                    placeholder={'Серикбай Алия\nНурланов Арман\nАхметов Диас'}
+                    className="w-full p-3 text-xs sm:text-sm bg-white border border-indigo-200 rounded-xl focus:outline-none focus:border-indigo-500"
+                  />
+
+                  {bulkNotice && (
+                    <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-800">
+                      ✓ {bulkNotice}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <Link
+                      href={`/teacher/cards/${activeBulkClassId}`}
+                      className="text-xs font-bold text-indigo-700 hover:underline"
+                    >
+                      🖨️ Открыть карточки для печати A4 →
+                    </Link>
+                    <button
+                      type="submit"
+                      disabled={bulkCreating}
+                      className="btn-tactile px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs font-extrabold"
+                    >
+                      {bulkCreating
+                        ? 'Создаём аккаунты...'
+                        : '+ Создать аккаунты и PIN-коды'}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              <div className="space-y-3">
+                <h2 className="text-sm font-extrabold text-slate-900">
+                  Список учеников ({students.length})
+                </h2>
+
+                {students.length === 0 ? (
+                  <div className="p-8 text-center text-xs text-slate-500">
+                    Пока нет зарегистрированных учеников.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100">
+                    {students.map((st) => (
+                      <div
+                        key={st.id}
+                        className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                      >
+                        <div className="min-w-0">
+                          <div className="text-sm font-bold text-slate-900 truncate">
+                            {st.full_name}
+                          </div>
+                          <div className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5">
+                            {st.login_username ? (
+                              <>
+                                <span className="px-2 py-0.5 rounded-md bg-slate-100 font-mono font-bold text-slate-700">
+                                  {st.login_username}
+                                </span>
+                                <span className="px-2 py-0.5 rounded-md bg-indigo-50 font-mono font-bold text-indigo-700">
+                                  PIN: {st.pin_code}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-slate-400 truncate">{st.email}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                          <select
+                            disabled={busyStudentId === st.id}
+                            value={st.classroom_id || ''}
+                            onChange={(e) => handleAssignClass(st.id, e.target.value)}
+                            className="px-3 py-1.5 text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl"
+                          >
+                            <option value="">Без класса</option>
+                            {classrooms.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+
+                          <button
+                            type="button"
+                            disabled={busyStudentId === st.id}
+                            onClick={() => handleResetPassword(st)}
+                            className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition whitespace-nowrap"
+                          >
+                            🔑 {st.login_username ? 'Новый PIN' : 'Сбросить пароль'}
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={busyStudentId === st.id}
+                            onClick={() => handleRenameStudent(st)}
+                            title="Переименовать ученика"
+                            className="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-700 text-xs font-bold transition"
+                          >
+                            ✏️
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={busyStudentId === st.id}
+                            onClick={() => handleDeleteStudent(st)}
+                            title="Удалить аккаунт ученика"
+                            className="px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold transition"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+===== src/components/teacher/PrintCardsClient.tsx =====
+'use client';
+
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import QRCode from 'qrcode';
+
+export interface PrintableCard {
+  studentId: string;
+  fullName: string;
+  loginUsername: string;
+  pinCode: string;
+}
+
+interface Props {
+  classroomName: string;
+  cards: PrintableCard[];
+}
+
+export default function PrintCardsClient({ classroomName, cards }: Props) {
+  const [origin, setOrigin] = useState('https://math-platform-pink.vercel.app');
+  const [qrMap, setQrMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const currentOrigin = window.location.origin;
+    setOrigin(currentOrigin);
+
+    let cancelled = false;
+    async function generateAll() {
+      const next: Record<string, string> = {};
+      for (const card of cards) {
+        const url = `${currentOrigin}/login?u=${encodeURIComponent(card.loginUsername)}`;
+        try {
+          next[card.studentId] = await QRCode.toDataURL(url, {
+            width: 140,
+            margin: 1,
+            color: { dark: '#0F172A', light: '#FFFFFF' },
+          });
+        } catch {
+          // Игнорируем единичную ошибку генерации
+        }
+      }
+      if (!cancelled) setQrMap(next);
+    }
+
+    generateAll();
+    return () => {
+      cancelled = true;
+    };
+  }, [cards]);
+
+  const cleanHost = origin.replace(/^https?:\/\//, '');
+
+  return (
+    <div className="min-h-screen bg-[#F6F7FB] print:bg-white">
+      {/* Верхняя панель (скрывается при печати) */}
+      <div className="print:hidden sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
+        <div className="max-w-5xl mx-auto px-4 h-16 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-base sm:text-lg font-extrabold text-slate-900">
+              🖨️ Карточки входа — {classroomName}
+            </h1>
+            <p className="text-xs text-slate-500">
+              Карточек: <strong>{cards.length}</strong> · Формат A4, удобно разрезать и вклеить в тетрадь
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/teacher/journal"
+              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700"
+            >
+              ← В журнал
+            </Link>
+            <button
+              type="button"
+              onClick={() => window.print()}
+              disabled={cards.length === 0}
+              className="btn-tactile px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-50 text-white text-xs sm:text-sm font-extrabold"
+            >
+              🖨️ Распечатать / Сохранить в PDF
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Сетка карточек */}
+      <main className="max-w-5xl mx-auto p-4 sm:p-6 print:p-0 print:max-w-none">
+        {cards.length === 0 ? (
+          <div className="bg-white rounded-3xl border border-slate-200 p-10 text-center space-y-2">
+            <div className="text-3xl">🪪</div>
+            <h2 className="text-base font-extrabold text-slate-900">
+              В классе {classroomName} пока нет учеников с PIN-карточками
+            </h2>
+            <p className="text-xs text-slate-500">
+              Вернись в «Журнал → Классы и ученики» и добавь учеников списком.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 print:grid-cols-2 print:gap-3">
+            {cards.map((card) => (
+              <div
+                key={card.studentId}
+                className="bg-white rounded-2xl border-2 border-dashed border-slate-300 p-4 flex items-center justify-between gap-3 break-inside-avoid print:rounded-xl print:border-slate-400 print:p-3"
+              >
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-md bg-indigo-600 text-white text-[10px] font-extrabold print:bg-slate-900">
+                      MathHub · {classroomName}
+                    </span>
+                  </div>
+
+                  <div className="text-base font-extrabold text-slate-900 leading-tight truncate">
+                    {card.fullName}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-0.5">
+                    <div className="p-2 rounded-xl bg-slate-50 border border-slate-200">
+                      <div className="text-[10px] font-bold uppercase text-slate-400">
+                        Логин
+                      </div>
+                      <div className="font-mono text-sm font-extrabold text-slate-900 break-all">
+                        {card.loginUsername}
+                      </div>
+                    </div>
+
+                    <div className="p-2 rounded-xl bg-indigo-50/70 border border-indigo-200">
+                      <div className="text-[10px] font-bold uppercase text-indigo-500">
+                        PIN-код
+                      </div>
+                      <div className="font-mono text-base font-extrabold text-indigo-800 tracking-widest">
+                        {card.pinCode}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-[10px] font-semibold text-slate-500 truncate">
+                    Сайт: <span className="text-slate-700 font-bold">{cleanHost}</span>
+                  </div>
+                </div>
+
+                {/* QR-код */}
+                <div className="shrink-0 flex flex-col items-center gap-1">
+                  {qrMap[card.studentId] ? (
+                    <img
+                      src={qrMap[card.studentId]}
+                      alt={`QR ${card.loginUsername}`}
+                      className="w-24 h-24 rounded-xl border border-slate-200"
+                    />
+                  ) : (
+                    <div className="w-24 h-24 rounded-xl bg-slate-100 border border-slate-200" />
+                  )}
+                  <span className="text-[9px] font-bold text-slate-400">
+                    Сканируй камерой
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+===== src/components/teacher/SubmissionsReviewClient.tsx =====
+'use client';
+
+import { useMemo, useState } from 'react';
+import Link from 'next/link';
+import MathMarkdown from '@/components/lesson/MathMarkdown';
+import { playSound } from '@/lib/audio/sound';
+
+export interface ReviewClassroom {
+  id: string;
+  name: string;
+}
+
+export interface ReviewSubmissionItem {
+  id: string;
+  studentId: string;
+  studentName: string;
+  classroomId: string | null;
+  classroomName: string | null;
+  topicTitle: string;
+  topicOrder: number;
+  questionMd: string;
+  maxPoints: number;
+  answerText: string;
+  photoUrl: string | null;
+  status: string;
+  score: number;
+  teacherComment: string;
+  updatedAt: string;
+}
+
+interface AiReviewDraft {
+  transcribed_solution: string;
+  verdict: 'correct' | 'partial' | 'incorrect' | 'unreadable';
+  suggested_score: number;
+  error_step: string;
+  teacher_comment: string;
+}
+
+const VERDICT_META: Record<
+  AiReviewDraft['verdict'],
+  { label: string; cls: string }
+> = {
+  correct: {
+    label: '✅ Решение верное',
+    cls: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  },
+  partial: {
+    label: '🟡 Частично верно',
+    cls: 'bg-amber-100 text-amber-800 border-amber-300',
+  },
+  incorrect: {
+    label: '❌ Есть ошибка',
+    cls: 'bg-rose-100 text-rose-800 border-rose-300',
+  },
+  unreadable: {
+    label: '📷 Фото нечитаемо',
+    cls: 'bg-slate-100 text-slate-700 border-slate-300',
+  },
+};
+
+interface Props {
+  classrooms: ReviewClassroom[];
+  initialItems: ReviewSubmissionItem[];
+}
+
+export default function SubmissionsReviewClient({
+  classrooms,
+  initialItems,
+}: Props) {
+  const [items, setItems] = useState<ReviewSubmissionItem[]>(initialItems);
+  const [classFilter, setClassFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<'pending' | 'graded' | 'all'>(
+    'pending'
+  );
+  const [scoreDrafts, setScoreDrafts] = useState<Record<string, number>>(() => {
+    const map: Record<string, number> = {};
+    for (const it of initialItems) {
+      map[it.id] = it.status === 'graded' ? it.score : it.maxPoints;
+    }
+    return map;
+  });
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>(() => {
+    const map: Record<string, string> = {};
+    for (const it of initialItems) {
+      map[it.id] = it.teacherComment || '';
+    }
+    return map;
+  });
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  // Состояние ИИ-помощника проверки фото/текста
+  const [aiLoadingId, setAiLoadingId] = useState<string | null>(null);
+  const [aiReviews, setAiReviews] = useState<Record<string, AiReviewDraft>>({});
+  const [aiErrors, setAiErrors] = useState<Record<string, string>>({});
+
+  const pendingCount = useMemo(
+    () => items.filter((i) => i.status === 'pending_review').length,
+    [items]
+  );
+
+  const visibleItems = useMemo(() => {
+    return items.filter((item) => {
+      if (classFilter === 'unassigned' && item.classroomId !== null) return false;
+      if (
+        classFilter !== 'all' &&
+        classFilter !== 'unassigned' &&
+        item.classroomId !== classFilter
+      ) {
+        return false;
+      }
+
+      if (statusFilter === 'pending' && item.status !== 'pending_review') return false;
+      if (statusFilter === 'graded' && item.status !== 'graded') return false;
+      return true;
+    });
+  }, [items, classFilter, statusFilter]);
+
+  async function handleAiReview(item: ReviewSubmissionItem) {
+    setAiLoadingId(item.id);
+    setAiErrors((prev) => {
+      const next = { ...prev };
+      delete next[item.id];
+      return next;
+    });
+
+    try {
+      const res = await fetch('/api/teacher/ai-review-submission', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ submissionId: item.id }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setAiErrors((prev) => ({
+          ...prev,
+          [item.id]: data.error || 'Не удалось выполнить ИИ-анализ работы.',
+        }));
+        return;
+      }
+
+      const review = data.review as AiReviewDraft;
+      playSound('success');
+      setAiReviews((prev) => ({ ...prev, [item.id]: review }));
+    } catch {
+      setAiErrors((prev) => ({
+        ...prev,
+        [item.id]: 'Сетевая ошибка при обращении к ИИ.',
+      }));
+    } finally {
+      setAiLoadingId(null);
+    }
+  }
+
+  function applyAiDraft(item: ReviewSubmissionItem, review: AiReviewDraft) {
+    playSound('click');
+    const clampedScore = Math.max(
+      0,
+      Math.min(item.maxPoints, Math.round(review.suggested_score))
+    );
+    setScoreDrafts((prev) => ({ ...prev, [item.id]: clampedScore }));
+    setCommentDrafts((prev) => ({ ...prev, [item.id]: review.teacher_comment }));
+  }
+
+  async function handleGrade(item: ReviewSubmissionItem) {
+    setSavingId(item.id);
+    const nextScore = Math.max(
+      0,
+      Math.min(item.maxPoints, Number(scoreDrafts[item.id] ?? 0))
+    );
+    const nextComment = commentDrafts[item.id] ?? '';
+
+    try {
+      const res = await fetch('/api/teacher/grade-submission', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          submissionId: item.id,
+          score: nextScore,
+          teacherComment: nextComment,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Не удалось сохранить оценку');
+        return;
+      }
+
+      playSound('success');
+      setItems((prev) =>
+        prev.map((row) =>
+          row.id === item.id
+            ? {
+                ...row,
+                status: 'graded',
+                score: nextScore,
+                teacherComment: nextComment,
+              }
+            : row
+        )
+      );
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-[#F6F7FB]">
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
+        <div className="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between gap-3">
+          <div>
+            <h1 className="text-base sm:text-lg font-extrabold text-slate-900">
+              📥 Проверка домашних работ
+            </h1>
+            <p className="text-xs text-slate-500">
+              Ждут проверки: <strong className="text-amber-700">{pendingCount}</strong> ·
+              Всего развёрнутых: <strong>{items.length}</strong>
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/teacher/journal"
+              className="px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-bold transition"
+            >
+              📊 Журнал
+            </Link>
+            <Link
+              href="/today"
+              className="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-bold text-slate-700 transition"
+            >
+              ← Сегодня
+            </Link>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-5xl mx-auto px-4 py-6 space-y-5">
+        {/* Фильтры по классу и статусу */}
+        <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold text-slate-500">Класс:</span>
+            <select
+              value={classFilter}
+              onChange={(e) => setClassFilter(e.target.value)}
+              className="px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
+            >
+              <option value="all">Все классы</option>
+              {classrooms.map((c) => (
+                <option key={c.id} value={c.id}>
+                  Класс {c.name}
+                </option>
+              ))}
+              <option value="unassigned">Без класса</option>
+            </select>
+          </div>
+
+          <div className="inline-flex p-1 bg-slate-100 rounded-xl">
+            {(
+              [
+                ['pending', `⏳ Ждут (${pendingCount})`],
+                ['graded', '✓ Проверенные'],
+                ['all', 'Все'],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setStatusFilter(id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                  statusFilter === id
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Список работ */}
+        {visibleItems.length === 0 ? (
+          <div className="bg-white rounded-3xl border border-slate-200 p-10 text-center space-y-2">
+            <div className="text-3xl">🎉</div>
+            <p className="text-sm font-extrabold text-slate-800">
+              {statusFilter === 'pending'
+                ? 'Все работы в этом фильтре уже проверены!'
+                : 'Работ по выбранному фильтру пока нет.'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {visibleItems.map((item) => {
+              const isGraded = item.status === 'graded';
+              const busy = savingId === item.id;
+              const aiLoading = aiLoadingId === item.id;
+              const aiReview = aiReviews[item.id];
+              const aiError = aiErrors[item.id];
+              const verdictInfo = aiReview ? VERDICT_META[aiReview.verdict] : null;
+              const canAnalyze = Boolean(item.photoUrl || item.answerText.trim());
+
+              return (
+                <div
+                  key={item.id}
+                  className={`bg-white rounded-3xl border-2 p-5 space-y-4 shadow-xs ${
+                    isGraded ? 'border-emerald-200' : 'border-amber-200'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-extrabold text-slate-900">
+                          {item.studentName}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 text-[11px] font-bold">
+                          {item.classroomName || 'Без класса'}
+                        </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-md text-[11px] font-bold ${
+                            isGraded
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {isGraded
+                            ? `✓ Оценено: ${item.score}/${item.maxPoints} б.`
+                            : '⏳ Ждёт проверки'}
+                        </span>
+                      </div>
+                      <div className="text-xs font-semibold text-slate-500">
+                        Урок №{item.topicOrder}. {item.topicTitle}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {canAnalyze && (
+                        <button
+                          type="button"
+                          disabled={aiLoading}
+                          onClick={() => handleAiReview(item)}
+                          className="px-3 py-1.5 rounded-xl bg-violet-50 hover:bg-violet-100 border border-violet-200 text-violet-800 disabled:opacity-60 text-xs font-extrabold transition flex items-center gap-1.5"
+                        >
+                          {aiLoading ? (
+                            <>
+                              <span className="inline-block w-3.5 h-3.5 border-2 border-violet-600 border-t-transparent rounded-full animate-spin" />
+                              <span>Анализирую...</span>
+                            </>
+                          ) : (
+                            <>
+                              <span>✨</span>
+                              <span>
+                                {item.photoUrl
+                                  ? 'Распознать фото с ИИ'
+                                  : 'Проверить с ИИ'}
+                              </span>
+                            </>
+                          )}
+                        </button>
+                      )}
+
+                      <span className="text-[11px] text-slate-400">
+                        {new Date(item.updatedAt).toLocaleString('ru-RU', {
+                          day: 'numeric',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Условие задачи */}
+                  <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                    <div className="text-[10px] font-bold uppercase text-slate-400 mb-1">
+                      Условие ({item.maxPoints} б.)
+                    </div>
+                    <MathMarkdown content={item.questionMd} />
+                  </div>
+
+                  {/* Ответ ученика */}
+                  <div className="space-y-3">
+                    {item.answerText && (
+                      <div className="p-3.5 rounded-2xl bg-indigo-50/50 border border-indigo-100 text-sm text-slate-800 whitespace-pre-wrap">
+                        <div className="text-[10px] font-bold uppercase text-indigo-500 mb-1">
+                          Текст решения ученика
+                        </div>
+                        {item.answerText}
+                      </div>
+                    )}
+
+                    {item.photoUrl && (
+                      <div>
+                        <div className="text-[11px] font-bold text-slate-500 mb-1.5">
+                          📷 Фото тетради (нажми, чтобы открыть крупнее):
+                        </div>
+                        <a
+                          href={item.photoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block"
+                        >
+                          <img
+                            src={item.photoUrl}
+                            alt={`Решение ${item.studentName}`}
+                            className="max-h-72 rounded-2xl border border-slate-200 shadow-xs hover:opacity-95 transition"
+                          />
+                        </a>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Ошибка ИИ-проверки */}
+                  {aiError && (
+                    <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-xs font-semibold text-rose-700">
+                      {aiError}
+                    </div>
+                  )}
+
+                  {/* Черновик проверки от ИИ */}
+                  {aiReview && verdictInfo && (
+                    <div className="p-4 rounded-2xl bg-violet-50 border-2 border-violet-200 space-y-3 animate-pop">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-extrabold text-violet-900">
+                            ✨ Черновик проверки ИИ
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-lg border text-[11px] font-extrabold ${verdictInfo.cls}`}
+                          >
+                            {verdictInfo.label}
+                          </span>
+                          <span className="px-2 py-0.5 rounded-lg bg-white border border-violet-200 text-xs font-extrabold text-indigo-700 tabular-nums">
+                            Рекомендуется: {aiReview.suggested_score} / {item.maxPoints} б.
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => applyAiDraft(item, aiReview)}
+                            className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold transition"
+                          >
+                            📥 Подставить балл и комментарий
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAiReviews((prev) => {
+                                const next = { ...prev };
+                                delete next[item.id];
+                                return next;
+                              })
+                            }
+                            className="w-7 h-7 rounded-lg bg-white border border-violet-200 text-slate-500 hover:text-rose-600 text-xs font-bold"
+                            title="Скрыть черновик"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+
+                      {aiReview.transcribed_solution && (
+                        <div className="p-3 rounded-xl bg-white border border-violet-200/70 space-y-1">
+                          <div className="text-[10px] font-extrabold uppercase text-slate-400">
+                            Расшифровка решения
+                          </div>
+                          <div className="text-xs sm:text-sm text-slate-800 whitespace-pre-wrap">
+                            <MathMarkdown content={aiReview.transcribed_solution} />
+                          </div>
+                        </div>
+                      )}
+
+                      {aiReview.error_step && (
+                        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                          <strong>⚠️ Где найдена ошибка:</strong> {aiReview.error_step}
+                        </div>
+                      )}
+
+                      {aiReview.teacher_comment && (
+                        <div className="text-xs text-slate-700">
+                          <strong className="text-violet-900">Предложенный комментарий:</strong>{' '}
+                          {aiReview.teacher_comment}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Выставление оценки */}
+                  <div className="pt-3 border-t border-slate-100 space-y-2.5">
+                    {item.maxPoints <= 6 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-bold text-slate-500 mr-1">
+                          Быстрый балл:
+                        </span>
+                        {Array.from({ length: item.maxPoints + 1 }, (_, n) => {
+                          const selected = (scoreDrafts[item.id] ?? 0) === n;
+                          return (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => {
+                                playSound('click');
+                                setScoreDrafts((prev) => ({ ...prev, [item.id]: n }));
+                              }}
+                              className={`w-8 h-8 rounded-lg text-xs font-extrabold border transition ${
+                                selected
+                                  ? 'bg-indigo-600 text-white border-indigo-700'
+                                  : 'bg-slate-50 hover:bg-indigo-50 text-slate-700 border-slate-200'
+                              }`}
+                            >
+                              {n}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3">
+                      <div className="w-full sm:w-32">
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                          Баллы (из {item.maxPoints})
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={item.maxPoints}
+                          value={scoreDrafts[item.id] ?? 0}
+                          onChange={(e) =>
+                            setScoreDrafts((prev) => ({
+                              ...prev,
+                              [item.id]: Number(e.target.value),
+                            }))
+                          }
+                          className="w-full px-3 py-2 text-sm font-extrabold text-center bg-slate-50 border border-slate-300 rounded-xl"
+                        />
+                      </div>
+
+                      <div className="flex-1">
+                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                          Комментарий ученику (появится на экране «Сегодня»)
+                        </label>
+                        <input
+                          type="text"
+                          value={commentDrafts[item.id] ?? ''}
+                          onChange={(e) =>
+                            setCommentDrafts((prev) => ({
+                              ...prev,
+                              [item.id]: e.target.value,
+                            }))
+                          }
+                          placeholder="Например: Отлично, аккуратное решение!"
+                          className="w-full px-3.5 py-2 text-xs sm:text-sm bg-slate-50 border border-slate-300 rounded-xl"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => handleGrade(item)}
+                        className="btn-tactile px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold shrink-0"
+                      >
+                        {busy
+                          ? 'Сохраняем...'
+                          : isGraded
+                            ? 'Обновить оценку'
+                            : '✓ Поставить балл'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+===== src/components/today/TodayClient.tsx =====
+'use client';
+
+import { useMemo, useState, useSyncExternalStore } from 'react';
+import Link from 'next/link';
+import AppNav from '@/components/layout/AppNav';
+import GamificationHeader from '@/components/gamification/GamificationHeader';
+import { useGamification } from '@/hooks/useGamification';
+import { cleanSectionName, formatShortRuDate } from '@/lib/format/cleanTopic';
+import type { Course, Profile } from '@/types/db';
+
+export interface TodayScheduleCard {
+  id: string;
+  classroomId: string;
+  classroomName: string;
+  topicId: string;
+  topicOrder: number;
+  topicTitle: string;
+  topicSection: string;
+  topicValueExample: string;
+  isAssessment: boolean;
+  courseSlug: string;
+  courseTitle: string;
+  lessonDate: string;
+  hwDueDate: string | null;
+  note: string;
+  totalTasks: number;
+  doneTasks: number;
+  earnedPoints: number;
+  maxPoints: number;
+  isCompleted: boolean;
+}
+
+export interface RecentGradedCard {
+  id: string;
+  topicId: string;
+  topicTitle: string;
+  courseSlug: string;
+  score: number;
+  maxPoints: number;
+  teacherComment: string;
+}
+
+interface ClassroomOption {
+  id: string;
+  name: string;
+  join_code: string;
+}
+
+interface LastLessonSnapshot {
+  courseId: string;
+  courseTitle: string;
+  pathname: string;
+  topicId: string;
+  topicTitle: string;
+  orderIndex: number;
+  quarter: number;
+  tab: 'theory' | 'interactive' | 'homework';
+  updatedAt: number;
+}
+
+interface Props {
+  profile: Profile | null;
+  studentClassroom: ClassroomOption | null;
+  teacherClassrooms: ClassroomOption[];
+  schedules: TodayScheduleCard[];
+  recentGraded: RecentGradedCard[];
+  courses: Course[];
+  stats: {
+    completedTopics: number;
+    simSolved: number;
+    bestStreak: number;
+  };
+  todayIso: string;
+  tomorrowIso: string;
+}
+
+const LAST_LESSON_STORAGE_KEY = 'mathhub_last_lesson';
+
+const TAB_LABELS: Record<LastLessonSnapshot['tab'], string> = {
+  theory: '📘 Слайды и конспект',
+  interactive: '🎮 Тренажёр',
+  homework: '📝 Домашнее задание',
+};
+
+const QUICK_SIMS = [
+  { id: 'fractions_visual', icon: '🍕', name: 'Пицца дробей', desc: 'Доли и сравнение' },
+  { id: 'divisibility', icon: '⚡', name: 'Блиц: Делимость', desc: 'На 2, 3, 5, 9, 10' },
+  { id: 'percent_grid', icon: '💯', name: 'Проценты 10×10', desc: 'Сетка и дроби' },
+  { id: 'diagrams', icon: '📊', name: 'Диаграммы', desc: 'Круги и столбцы' },
+];
+
+function subscribeLastLesson(callback: () => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  window.addEventListener('storage', callback);
+  return () => window.removeEventListener('storage', callback);
+}
+
+function readLastLessonRaw(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(LAST_LESSON_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function parseLastLesson(raw: string | null): LastLessonSnapshot | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<LastLessonSnapshot>;
+    if (
+      !parsed ||
+      typeof parsed.pathname !== 'string' ||
+      !parsed.pathname.startsWith('/courses/') ||
+      typeof parsed.topicId !== 'string' ||
+      typeof parsed.topicTitle !== 'string'
+    ) {
+      return null;
+    }
+    const safeTab: LastLessonSnapshot['tab'] =
+      parsed.tab === 'interactive' || parsed.tab === 'homework'
+        ? parsed.tab
+        : 'theory';
+    return {
+      courseId: parsed.courseId || '',
+      courseTitle: parsed.courseTitle || 'Курс математики',
+      pathname: parsed.pathname,
+      topicId: parsed.topicId,
+      topicTitle: parsed.topicTitle,
+      orderIndex: Number(parsed.orderIndex) || 1,
+      quarter: Number(parsed.quarter) || 1,
+      tab: safeTab,
+      updatedAt: Number(parsed.updatedAt) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export default function TodayClient({
+  profile,
+  studentClassroom,
+  teacherClassrooms,
+  schedules,
+  recentGraded,
+  courses,
+  stats,
+  todayIso,
+  tomorrowIso,
+}: Props) {
+  const isTeacher = profile?.role === 'teacher';
+  const [selectedClassId, setSelectedClassId] = useState<string>(
+    teacherClassrooms[0]?.id || ''
+  );
+
+  const lastLessonRaw = useSyncExternalStore(
+    subscribeLastLesson,
+    readLastLessonRaw,
+    () => null
+  );
+  const lastLesson = useMemo(() => parseLastLesson(lastLessonRaw), [lastLessonRaw]);
+
+  const { stats: gamificationStats, rewardBanner } = useGamification(
+    Boolean(profile && !isTeacher)
+  );
+
+  const firstName = profile?.full_name?.trim().split(/\s+/)[0] || '';
+  const defaultCourse = courses[0] || null;
+
+  const filteredSchedules = useMemo(() => {
+    if (isTeacher && selectedClassId) {
+      return schedules.filter((s) => s.classroomId === selectedClassId);
+    }
+    return schedules;
+  }, [isTeacher, selectedClassId, schedules]);
+
+  const todayLessons = useMemo(
+    () => filteredSchedules.filter((s) => s.lessonDate === todayIso),
+    [filteredSchedules, todayIso]
+  );
+
+  const tomorrowLessons = useMemo(
+    () => filteredSchedules.filter((s) => s.lessonDate === tomorrowIso),
+    [filteredSchedules, tomorrowIso]
+  );
+
+  const upcomingLessons = useMemo(
+    () =>
+      filteredSchedules
+        .filter((s) => s.lessonDate > tomorrowIso)
+        .sort((a, b) => a.lessonDate.localeCompare(b.lessonDate))
+        .slice(0, 3),
+    [filteredSchedules, tomorrowIso]
+  );
+
+  const activeHomework = useMemo(() => {
+    return filteredSchedules
+      .filter((s) => s.totalTasks > 0 && (s.hwDueDate || s.lessonDate >= todayIso))
+      .sort((a, b) =>
+        (a.hwDueDate || a.lessonDate).localeCompare(b.hwDueDate || b.lessonDate)
+      );
+  }, [filteredSchedules, todayIso]);
+
+  const showCompactResume =
+    Boolean(lastLesson) &&
+    todayLessons.length > 0 &&
+    !todayLessons.some((l) => l.topicId === lastLesson?.topicId);
+
+  function getDueBadge(dueDate: string | null) {
+    if (!dueDate) {
+      return { label: 'Домашнее задание', cls: 'bg-amber-100 text-amber-800' };
+    }
+    if (dueDate < todayIso) {
+      return {
+        label: `Просрочено (${formatShortRuDate(dueDate)})`,
+        cls: 'bg-rose-100 text-rose-700',
+      };
+    }
+    if (dueDate === todayIso) {
+      return { label: 'Сдать сегодня', cls: 'bg-amber-500 text-white' };
+    }
+    if (dueDate === tomorrowIso) {
+      return { label: 'Сдать до завтра', cls: 'bg-amber-100 text-amber-900' };
+    }
+    return {
+      label: `Сдать до ${formatShortRuDate(dueDate)}`,
+      cls: 'bg-amber-100 text-amber-800',
+    };
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <AppNav profile={profile} />
+
+      <main className="max-w-5xl w-full mx-auto px-4 pt-6 pb-28 md:pb-10 space-y-6">
+        {/* Приветствие и живая статистика */}
+        <section className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900">
+                {profile ? `Привет, ${firstName}!` : 'Добро пожаловать в MathHub'}
+              </h1>
+              {studentClassroom && (
+                <span className="px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-800 text-xs font-extrabold">
+                  {studentClassroom.name}
+                </span>
+              )}
+              {isTeacher && (
+                <span className="px-2.5 py-1 rounded-full bg-slate-900 text-white text-xs font-bold">
+                  👨‍🏫 Учитель
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-slate-500">
+              {isTeacher
+                ? 'Проверяй, что сегодня видят твои классы, или открой любой урок для назначения.'
+                : 'Здесь собрано всё главное на сегодня, домашка и твои тренажёры.'}
+            </p>
+          </div>
+
+          {isTeacher ? (
+            teacherClassrooms.length > 0 && (
+              <div className="flex items-center gap-2 bg-white px-3.5 py-2 rounded-2xl border border-slate-200 shadow-xs shrink-0">
+                <span className="text-xs font-bold text-slate-500">Класс:</span>
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => setSelectedClassId(e.target.value)}
+                  className="text-xs sm:text-sm font-extrabold text-indigo-700 bg-transparent focus:outline-none cursor-pointer"
+                >
+                  {teacherClassrooms.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.join_code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )
+          ) : (
+            profile && (
+              <div className="flex items-center gap-2.5 shrink-0">
+                <div className="bg-white px-3.5 py-2 rounded-2xl border border-slate-200 shadow-xs text-center">
+                  <div className="text-lg font-extrabold text-emerald-600 tabular-nums leading-none">
+                    {stats.completedTopics}
+                  </div>
+                  <div className="text-[10px] font-bold text-slate-400 mt-0.5">
+                    тем пройдено
+                  </div>
+                </div>
+                <div className="bg-white px-3.5 py-2 rounded-2xl border border-slate-200 shadow-xs text-center">
+                  <div className="text-lg font-extrabold text-indigo-600 tabular-nums leading-none">
+                    {stats.simSolved}
+                  </div>
+                  <div className="text-[10px] font-bold text-slate-400 mt-0.5">
+                    в тренажёрах
+                  </div>
+                </div>
+              </div>
+            )
+          )}
+        </section>
+
+        {/* Панель уровня, XP, стрика и наград */}
+        {profile && !isTeacher && (
+          <GamificationHeader stats={gamificationStats} rewardBanner={rewardBanner} />
+        )}
+
+        {/* Если гость ещё не вошёл */}
+        {!profile && (
+          <div className="bg-gradient-to-br from-indigo-600 to-violet-600 rounded-3xl p-6 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <h2 className="text-lg sm:text-xl font-extrabold">
+                Войди в аккаунт своего класса
+              </h2>
+              <p className="text-xs sm:text-sm text-indigo-100">
+                Тогда здесь появятся сегодняшние уроки, твои домашние задания и оценки учителя.
+              </p>
+            </div>
+            <Link
+              href="/login"
+              className="btn-tactile px-5 py-3 rounded-2xl bg-white text-indigo-700 border-indigo-200 text-sm font-extrabold text-center shrink-0"
+            >
+              Войти или зарегистрироваться
+            </Link>
+          </div>
+        )}
+
+        {/* ГЛАВНЫЙ ФОКУС: УРОК СЕГОДНЯ */}
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-extrabold uppercase tracking-wider text-emerald-700 flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+              </span>
+              На сегодня
+            </h2>
+            <span className="text-xs font-semibold text-slate-400">
+              {formatShortRuDate(todayIso)}
+            </span>
+          </div>
+
+          {todayLessons.length > 0 ? (
+            <div className="space-y-3">
+              {todayLessons.map((lesson) => (
+                <div
+                  key={lesson.id}
+                  className="bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/40 rounded-3xl border-2 border-emerald-400 shadow-sm p-5 sm:p-6 space-y-4 animate-pop"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="px-2.5 py-1 rounded-full bg-emerald-500 text-white font-extrabold">
+                        ● Урок сегодня
+                      </span>
+                      <span className="font-bold text-emerald-800">
+                        {cleanSectionName(lesson.topicSection)}
+                      </span>
+                      {lesson.isAssessment && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-900 font-extrabold">
+                          🏆 СОР / СОЧ
+                        </span>
+                      )}
+                    </div>
+                    {lesson.isCompleted && (
+                      <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-bold">
+                        ✓ Пройдено
+                      </span>
+                    )}
+                  </div>
+
+                  <div>
+                    <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900">
+                      {lesson.topicTitle}
+                    </h3>
+                    {lesson.note && (
+                      <p className="mt-1.5 text-xs sm:text-sm font-semibold text-emerald-900 bg-emerald-100/70 px-3 py-2 rounded-xl">
+                        💬 От учителя: {lesson.note}
+                      </p>
+                    )}
+                    {lesson.topicValueExample && !lesson.note && (
+                      <p className="mt-1.5 text-xs sm:text-sm text-slate-600 line-clamp-2">
+                        {lesson.topicValueExample}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-600">
+                      <span className="px-2.5 py-1 rounded-xl bg-white border border-slate-200">
+                        📘 Конспект
+                      </span>
+                      <span className="px-2.5 py-1 rounded-xl bg-white border border-slate-200">
+                        🎮 Тренажёр
+                      </span>
+                      {lesson.totalTasks > 0 && (
+                        <span className="px-2.5 py-1 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 font-bold">
+                          📝 ДЗ: {lesson.doneTasks}/{lesson.totalTasks}
+                        </span>
+                      )}
+                    </div>
+
+                    <Link
+                      href={`/courses/${lesson.courseSlug}?topic=${lesson.topicId}`}
+                      prefetch={false}
+                      className="btn-tactile px-5 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 text-white text-sm font-extrabold shadow-xs"
+                    >
+                      Открыть урок →
+                    </Link>
+                  </div>
+                </div>
+              ))}
+
+              {/* Компактная полоска возврата, если недавно был открыт другой урок */}
+              {showCompactResume && lastLesson && (
+                <div className="bg-white rounded-2xl border border-slate-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="px-2.5 py-1 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-extrabold shrink-0">
+                      ↩ Продолжить
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-xs sm:text-sm font-extrabold text-slate-900 truncate">
+                        {lastLesson.orderIndex}. {lastLesson.topicTitle}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {lastLesson.courseTitle} · {TAB_LABELS[lastLesson.tab]}
+                      </div>
+                    </div>
+                  </div>
+                  <Link
+                    href={`${lastLesson.pathname}?topic=${lastLesson.topicId}&tab=${lastLesson.tab}`}
+                    prefetch={false}
+                    className="px-3.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-extrabold transition shrink-0"
+                  >
+                    Вернуться →
+                  </Link>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {/* Если есть недавно открытый урок — показываем карточку быстрого продолжения */}
+              {lastLesson ? (
+                <div className="bg-white rounded-3xl border-2 border-indigo-200 shadow-xs p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-pop">
+                  <div className="space-y-2 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-extrabold">
+                        ↩ Продолжить урок
+                      </span>
+                      <span className="font-bold text-slate-500">
+                        {lastLesson.courseTitle} · {lastLesson.quarter} четверть
+                      </span>
+                      <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 font-bold">
+                        {TAB_LABELS[lastLesson.tab]}
+                      </span>
+                    </div>
+                    <h3 className="text-lg sm:text-xl font-extrabold text-slate-900 leading-snug">
+                      {lastLesson.orderIndex}. {lastLesson.topicTitle}
+                    </h3>
+                    {isTeacher && (
+                      <p className="text-xs text-slate-500">
+                        На сегодня для этого класса урок ещё не закреплён — можешь назначить эту или любую другую тему через «📅 Назначить классу».
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <Link
+                      href={`${lastLesson.pathname}?topic=${lastLesson.topicId}&tab=${lastLesson.tab}`}
+                      prefetch={false}
+                      className="btn-tactile px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-xs sm:text-sm font-extrabold text-center"
+                    >
+                      Продолжить →
+                    </Link>
+                    <Link
+                      href="/courses"
+                      className="px-4 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-extrabold text-center transition"
+                    >
+                      Все темы
+                    </Link>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="text-base font-extrabold text-slate-900">
+                      {isTeacher
+                        ? 'На сегодня для этого класса урок ещё не закреплён'
+                        : 'На сегодня особых назначений нет'}
+                    </div>
+                    <p className="text-xs sm:text-sm text-slate-500">
+                      {isTeacher
+                        ? 'Открой любую тему в курсе в режиме «Редактор» и нажми «📅 Назначить классу» — карточка сразу загорится здесь зелёным.'
+                        : 'Ты можешь открыть любую тему программы или потренироваться в симуляторах.'}
+                    </p>
+                  </div>
+                  {defaultCourse && (
+                    <Link
+                      href={`/courses/${defaultCourse.slug}`}
+                      prefetch={false}
+                      className="btn-tactile px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-xs sm:text-sm font-extrabold text-center shrink-0"
+                    >
+                      Открыть {defaultCourse.title}
+                    </Link>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+
+        {/* ДОМАШНИЕ ЗАДАНИЯ И ОЦЕНКИ */}
+        {(activeHomework.length > 0 || recentGraded.length > 0) && (
+          <section className="space-y-3">
+            <h2 className="text-sm font-extrabold uppercase tracking-wider text-amber-700 flex items-center gap-2">
+              <span>📝</span> Домашние задания
+            </h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              {activeHomework.map((hw) => {
+                const allDone = hw.doneTasks >= hw.totalTasks;
+                const badge = getDueBadge(hw.hwDueDate);
+                return (
+                  <div
+                    key={`hw-${hw.id}`}
+                    className={`rounded-3xl border-2 p-5 flex flex-col justify-between gap-4 transition ${
+                      allDone
+                        ? 'bg-white border-emerald-200'
+                        : 'bg-amber-50/40 border-amber-300 shadow-xs'
+                    }`}
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[11px] font-extrabold ${
+                            allDone ? 'bg-emerald-100 text-emerald-800' : badge.cls
+                          }`}
+                        >
+                          {allDone ? '✓ Отправлено' : badge.label}
+                        </span>
+                        <span className="text-xs font-bold text-slate-500 tabular-nums">
+                          {hw.doneTasks} / {hw.totalTasks} зад.
+                        </span>
+                      </div>
+                      <h3 className="text-base font-extrabold text-slate-900 leading-snug">
+                        {hw.topicTitle}
+                      </h3>
+                      <p className="text-xs text-slate-500">
+                        {cleanSectionName(hw.topicSection)}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-indigo-700 tabular-nums">
+                        Баллы: {hw.earnedPoints} / {hw.maxPoints}
+                      </span>
+                      <Link
+                        href={`/courses/${hw.courseSlug}?topic=${hw.topicId}&tab=homework`}
+                        prefetch={false}
+                        className={`btn-tactile px-4 py-2 rounded-xl text-xs font-extrabold ${
+                          allDone
+                            ? 'bg-slate-100 hover:bg-slate-200 border-slate-300 text-slate-700'
+                            : 'bg-amber-500 hover:bg-amber-600 border-amber-700 text-white'
+                        }`}
+                      >
+                        {allDone ? 'Посмотреть →' : 'Решать ДЗ →'}
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {recentGraded.map((g) => (
+                <Link
+                  key={g.id}
+                  href={`/courses/${g.courseSlug}?topic=${g.topicId}&tab=homework`}
+                  prefetch={false}
+                  className="rounded-3xl bg-white border border-emerald-200 hover:border-emerald-400 p-5 flex flex-col justify-between gap-3 transition"
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[11px] font-extrabold">
+                        ✓ Проверено учителем
+                      </span>
+                      <span className="text-sm font-extrabold text-emerald-700 tabular-nums">
+                        {g.score} / {g.maxPoints} б.
+                      </span>
+                    </div>
+                    <div className="text-sm font-extrabold text-slate-900">
+                      {g.topicTitle}
+                    </div>
+                    {g.teacherComment && (
+                      <p className="text-xs text-slate-600 bg-emerald-50/70 px-3 py-2 rounded-xl">
+                        «{g.teacherComment}»
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-xs font-bold text-emerald-700">
+                    Открыть работу →
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* НА ЗАВТРА И БЛИЖАЙШИЕ УРОКИ */}
+        {(tomorrowLessons.length > 0 || upcomingLessons.length > 0) && (
+          <section className="space-y-3">
+            <h2 className="text-sm font-extrabold uppercase tracking-wider text-sky-700 flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-sky-500 inline-block" />
+              На завтра и скоро
+            </h2>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              {tomorrowLessons.map((lesson) => (
+                <Link
+                  key={lesson.id}
+                  href={`/courses/${lesson.courseSlug}?topic=${lesson.topicId}`}
+                  prefetch={false}
+                  className="group bg-sky-50/60 hover:bg-sky-50 rounded-3xl border-2 border-sky-200 hover:border-sky-400 p-5 flex flex-col justify-between gap-3 transition"
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="px-2.5 py-0.5 rounded-full bg-sky-600 text-white text-[11px] font-extrabold">
+                        Завтра · {formatShortRuDate(lesson.lessonDate)}
+                      </span>
+                      {lesson.isAssessment && (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[11px] font-bold">
+                          🏆 СОР / СОЧ
+                        </span>
+                      )}
+                    </div>
+                    <h3 className="text-base font-extrabold text-slate-900 group-hover:text-sky-800 transition">
+                      {lesson.topicTitle}
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      {cleanSectionName(lesson.topicSection)}
+                    </p>
+                  </div>
+                  <div className="text-xs font-bold text-sky-700">
+                    Подготовиться заранее →
+                  </div>
+                </Link>
+              ))}
+
+              {upcomingLessons.map((lesson) => (
+                <Link
+                  key={lesson.id}
+                  href={`/courses/${lesson.courseSlug}?topic=${lesson.topicId}`}
+                  prefetch={false}
+                  className="group bg-white rounded-3xl border border-slate-200 hover:border-sky-300 p-5 flex flex-col justify-between gap-3 transition"
+                >
+                  <div className="space-y-1.5">
+                    <span className="inline-block px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[11px] font-bold">
+                      📅 {formatShortRuDate(lesson.lessonDate)}
+                    </span>
+                    <h3 className="text-base font-extrabold text-slate-900 group-hover:text-indigo-700 transition">
+                      {lesson.topicTitle}
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      {cleanSectionName(lesson.topicSection)}
+                    </p>
+                  </div>
+                  <div className="text-xs font-bold text-indigo-600">
+                    Открыть тему →
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* БЫСТРЫЙ ВХОД В ТРЕНАЖЁРЫ */}
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-extrabold uppercase tracking-wider text-slate-500">
+              Потренироваться прямо сейчас
+            </h2>
+            <Link
+              href="/simulators"
+              className="text-xs font-bold text-indigo-600 hover:underline"
+            >
+              Все 8 тренажёров →
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {QUICK_SIMS.map((sim) => (
+              <Link
+                key={sim.id}
+                href={`/simulators?sim=${sim.id}`}
+                className="group bg-white rounded-2xl border border-slate-200 hover:border-indigo-400 p-4 shadow-xs hover:shadow-sm transition flex flex-col gap-2"
+              >
+                <span className="text-2xl">{sim.icon}</span>
+                <div>
+                  <div className="text-xs sm:text-sm font-extrabold text-slate-900 group-hover:text-indigo-700">
+                    {sim.name}
+                  </div>
+                  <div className="text-[11px] text-slate-500">{sim.desc}</div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+===== src/components/ui/ConfettiBurst.tsx =====
+'use client';
+
+import { useEffect, useRef } from 'react';
+
+interface Props {
+  /** Увеличивай число (1, 2, 3...), чтобы запустить новый залп конфетти */
+  burstKey: number;
+}
+
+interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  color: string;
+  rotation: number;
+  vRot: number;
+  life: number;
+}
+
+const COLORS = [
+  '#6366F1',
+  '#10B981',
+  '#F59E0B',
+  '#EC4899',
+  '#0EA5E9',
+  '#8B5CF6',
+];
+
+export default function ConfettiBurst({ burstKey }: Props) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    if (burstKey <= 0) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+
+    const particles: Particle[] = Array.from({ length: 85 }, () => {
+      const fromLeft = Math.random() < 0.5;
+      const startX = fromLeft
+        ? width * (0.15 + Math.random() * 0.25)
+        : width * (0.6 + Math.random() * 0.25);
+      const startY = height * (0.25 + Math.random() * 0.2);
+
+      return {
+        x: startX,
+        y: startY,
+        vx: (Math.random() - 0.5) * 11,
+        vy: -(5 + Math.random() * 8),
+        size: 6 + Math.random() * 6,
+        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        rotation: Math.random() * Math.PI * 2,
+        vRot: (Math.random() - 0.5) * 0.25,
+        life: 1,
+      };
+    });
+
+    let rafId = 0;
+    const startTime = performance.now();
+
+    function frame(now: number) {
+      if (!ctx) return;
+      const elapsed = now - startTime;
+      ctx.clearRect(0, 0, width, height);
+
+      let alive = 0;
+      for (const p of particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.28; // гравитация
+        p.vx *= 0.99;
+        p.rotation += p.vRot;
+        p.life = Math.max(0, 1 - elapsed / 2300);
+
+        if (p.life > 0.02 && p.y < height + 30) {
+          alive++;
+          ctx.save();
+          ctx.globalAlpha = p.life;
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.rotation);
+          ctx.fillStyle = p.color;
+          ctx.fillRect(-p.size / 2, -p.size / 3, p.size, p.size * 0.65);
+          ctx.restore();
+        }
+      }
+
+      if (alive > 0 && elapsed < 2400) {
+        rafId = requestAnimationFrame(frame);
+      } else {
+        ctx.clearRect(0, 0, width, height);
+      }
+    }
+
+    rafId = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(rafId);
+  }, [burstKey]);
+
+  if (burstKey <= 0) return null;
+
+  return (
+    <canvas
+      ref={canvasRef}
+      aria-hidden="true"
+      className="fixed inset-0 z-[70] pointer-events-none"
+    />
+  );
+}
+
+===== src/components/ui/MathInput.tsx =====
+'use client';
+
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { playSound } from '@/lib/audio/sound';
+import {
+  closeMathKeyboard,
+  openMathKeyboard,
+  syncMathKeyboard,
+} from '@/lib/keyboard/mathKeyboardStore';
+
+interface Props {
+  value: string;
+  onChange: (next: string) => void;
+  onSubmit?: () => void;
+  placeholder?: string;
+  disabled?: boolean;
+  examMode?: boolean;
+  submitLabel?: string;
+  className?: string;
+}
+
+export default function MathInput({
+  value,
+  onChange,
+  onSubmit,
+  placeholder = 'Введи ответ...',
+  disabled = false,
+  examMode = false,
+  submitLabel = '✓ Проверить',
+  className = '',
+}: Props) {
+  const id = useId();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [preferNative, setPreferNative] = useState(false);
+
+  const handleSwitchNative = useCallback(() => {
+    setPreferNative(true);
+    closeMathKeyboard(id);
+    const el = inputRef.current;
+    if (!el) return;
+    el.blur();
+    setTimeout(() => {
+      el.focus();
+    }, 60);
+  }, [id]);
+
+  // Синхронизируем внешние изменения (например, сброс поля при следующем примере)
+  useEffect(() => {
+    syncMathKeyboard(id, {
+      value,
+      placeholder,
+      submitLabel,
+      examMode,
+      disabled,
+      onChange,
+      onSubmit,
+      onSwitchNative: handleSwitchNative,
+      inputRef,
+    });
+  }, [
+    id,
+    value,
+    placeholder,
+    submitLabel,
+    examMode,
+    disabled,
+    onChange,
+    onSubmit,
+    handleSwitchNative,
+  ]);
+
+  useEffect(() => {
+    return () => closeMathKeyboard(id);
+  }, [id]);
+
+  function openDock() {
+    if (disabled) return;
+    openMathKeyboard({
+      id,
+      value,
+      placeholder,
+      submitLabel,
+      examMode,
+      disabled,
+      onChange,
+      onSubmit,
+      onSwitchNative: handleSwitchNative,
+      inputRef,
+    });
+    // Плавно поднимаем поле, чтобы нижняя клавиатура его не перекрыла
+    setTimeout(() => {
+      inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+  }
+
+  return (
+    <div data-math-input="true" className="relative flex-1 min-w-0">
+      <input
+        ref={inputRef}
+        type="text"
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        inputMode={preferNative ? 'text' : 'none'}
+        disabled={disabled}
+        value={value}
+        placeholder={placeholder}
+        onFocus={() => {
+          if (!preferNative) openDock();
+        }}
+        onClick={() => {
+          if (!preferNative) openDock();
+        }}
+        onChange={(e) => onChange(e.target.value)}
+        className={`w-full pr-11 ${className}`}
+      />
+
+      {!disabled && (
+        <button
+          type="button"
+          title="Открыть математическую клавиатуру MathHub"
+          onPointerDown={(e) => e.preventDefault()}
+          onClick={() => {
+            playSound('click');
+            setPreferNative(false);
+            inputRef.current?.focus();
+            openDock();
+          }}
+          className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/80 text-indigo-700 flex items-center justify-center text-sm transition active:scale-95"
+        >
+          ⌨️
+        </button>
+      )}
+    </div>
+  );
+}
+
+===== src/components/ui/MathKeyboardDock.tsx =====
+'use client';
+
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { playSound } from '@/lib/audio/sound';
+import {
+  closeMathKeyboard,
+  getMathKeyboardSnapshot,
+  subscribeMathKeyboard,
+  updateMathKeyboardValue,
+} from '@/lib/keyboard/mathKeyboardStore';
+
+interface KeyDef {
+  label: string;
+  value: string;
+  kind?: 'digit' | 'symbol';
+  title?: string;
+}
+
+const NUMERIC_ROWS: KeyDef[][] = [
+  [
+    { label: '7', value: '7', kind: 'digit' },
+    { label: '8', value: '8', kind: 'digit' },
+    { label: '9', value: '9', kind: 'digit' },
+    { label: '/', value: '/', kind: 'symbol', title: 'Черта дроби (3/4)' },
+  ],
+  [
+    { label: '4', value: '4', kind: 'digit' },
+    { label: '5', value: '5', kind: 'digit' },
+    { label: '6', value: '6', kind: 'digit' },
+    { label: ',', value: ',', kind: 'symbol', title: 'Десятичная запятая' },
+  ],
+  [
+    { label: '1', value: '1', kind: 'digit' },
+    { label: '2', value: '2', kind: 'digit' },
+    { label: '3', value: '3', kind: 'digit' },
+    { label: '−', value: '-', kind: 'symbol', title: 'Минус' },
+  ],
+];
+
+const EXTRA_ROWS: KeyDef[][] = [
+  [
+    { label: 'x', value: 'x', kind: 'digit' },
+    { label: 'y', value: 'y', kind: 'digit' },
+    { label: 'a', value: 'a', kind: 'digit' },
+    { label: 'b', value: 'b', kind: 'digit' },
+  ],
+  [
+    { label: '²', value: '²', kind: 'symbol', title: 'В квадрате' },
+    { label: '³', value: '³', kind: 'symbol', title: 'В кубе' },
+    { label: '(', value: '(', kind: 'symbol' },
+    { label: ')', value: ')', kind: 'symbol' },
+  ],
+  [
+    { label: '+', value: '+', kind: 'symbol' },
+    { label: '·', value: '·', kind: 'symbol', title: 'Умножение' },
+    { label: '=', value: '=', kind: 'symbol' },
+    { label: '<', value: '<', kind: 'symbol' },
+  ],
+];
+
+export default function MathKeyboardDock() {
+  const active = useSyncExternalStore(
+    subscribeMathKeyboard,
+    getMathKeyboardSnapshot,
+    () => null
+  );
+  const [layout, setLayout] = useState<'num' | 'fx'>('num');
+
+  // Закрытие по Esc и по клику вне клавиатуры и активного поля
+  useEffect(() => {
+    if (!active) return;
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        closeMathKeyboard();
+      }
+    }
+
+    function handlePointerDown(e: PointerEvent) {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest('[data-math-keyboard]')) return;
+      if (target.closest('[data-math-input]')) return;
+      closeMathKeyboard();
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [active]);
+
+  if (!active || active.disabled) return null;
+
+  function tapFeedback() {
+    playSound('click');
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate(10);
+    }
+  }
+
+  function insertText(text: string) {
+    const cur = getMathKeyboardSnapshot();
+    if (!cur || cur.disabled) return;
+    tapFeedback();
+
+    const el = cur.inputRef?.current;
+    if (
+      el &&
+      typeof el.selectionStart === 'number' &&
+      typeof el.selectionEnd === 'number'
+    ) {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const next = cur.value.slice(0, start) + text + cur.value.slice(end);
+      updateMathKeyboardValue(cur.id, next);
+      cur.onChange(next);
+      requestAnimationFrame(() => {
+        el.focus();
+        const pos = start + text.length;
+        el.setSelectionRange(pos, pos);
+      });
+      return;
+    }
+
+    const next = cur.value + text;
+    updateMathKeyboardValue(cur.id, next);
+    cur.onChange(next);
+  }
+
+  function handleBackspace() {
+    const cur = getMathKeyboardSnapshot();
+    if (!cur || cur.disabled || cur.value.length === 0) return;
+    tapFeedback();
+
+    const el = cur.inputRef?.current;
+    if (
+      el &&
+      typeof el.selectionStart === 'number' &&
+      typeof el.selectionEnd === 'number'
+    ) {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      if (start !== end) {
+        const next = cur.value.slice(0, start) + cur.value.slice(end);
+        updateMathKeyboardValue(cur.id, next);
+        cur.onChange(next);
+        requestAnimationFrame(() => {
+          el.focus();
+          el.setSelectionRange(start, start);
+        });
+        return;
+      }
+      if (start > 0) {
+        const next = cur.value.slice(0, start - 1) + cur.value.slice(end);
+        updateMathKeyboardValue(cur.id, next);
+        cur.onChange(next);
+        requestAnimationFrame(() => {
+          el.focus();
+          el.setSelectionRange(start - 1, start - 1);
+        });
+        return;
+      }
+    }
+
+    const next = cur.value.slice(0, -1);
+    updateMathKeyboardValue(cur.id, next);
+    cur.onChange(next);
+  }
+
+  function handleClear() {
+    const cur = getMathKeyboardSnapshot();
+    if (!cur || cur.disabled || cur.value.length === 0) return;
+    tapFeedback();
+    updateMathKeyboardValue(cur.id, '');
+    cur.onChange('');
+    cur.inputRef?.current?.focus();
+  }
+
+  function handleSubmitKey() {
+    const cur = getMathKeyboardSnapshot();
+    if (!cur) return;
+    tapFeedback();
+    if (cur.examMode || !cur.onSubmit) {
+      closeMathKeyboard();
+      return;
+    }
+    cur.onSubmit();
+  }
+
+  function handleSwitchNative() {
+    const cur = getMathKeyboardSnapshot();
+    if (!cur) return;
+    tapFeedback();
+    cur.onSwitchNative?.();
+  }
+
+  const rows = layout === 'num' ? NUMERIC_ROWS : EXTRA_ROWS;
+
+  return (
+    <div
+      data-math-keyboard="true"
+      className="fixed bottom-0 inset-x-0 z-[75] px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pointer-events-none select-none print:hidden"
+    >
+      <div className="math-kb-shell pointer-events-auto max-w-lg mx-auto rounded-3xl border-2 border-slate-200 bg-white/95 backdrop-blur-xl shadow-2xl p-2.5 sm:p-3 space-y-2 animate-pop">
+        {/* Верхняя полоса: живой предпросмотр ответа + переключатели */}
+        <div className="flex items-center gap-1.5">
+          <div className="flex-1 min-w-0 h-9 px-3 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-between gap-2 overflow-hidden">
+            <span
+              className={`font-mono text-sm font-extrabold truncate ${
+                active.value ? 'text-slate-900' : 'text-slate-400 font-sans font-semibold text-xs'
+              }`}
+            >
+              {active.value || active.placeholder || 'Вводи ответ...'}
+            </span>
+            {active.value && (
+              <span className="w-0.5 h-4 bg-indigo-500 animate-pulse shrink-0" />
+            )}
+          </div>
+
+          <button
+            type="button"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={() => {
+              tapFeedback();
+              setLayout((v) => (v === 'num' ? 'fx' : 'num'));
+            }}
+            title="Переключить символы и переменные"
+            className={`h-9 px-2.5 rounded-xl border text-xs font-extrabold transition shrink-0 ${
+              layout === 'fx'
+                ? 'bg-indigo-600 text-white border-indigo-700'
+                : 'bg-slate-100 hover:bg-indigo-50 text-slate-700 border-slate-200'
+            }`}
+          >
+            {layout === 'num' ? 'x² fx' : '123'}
+          </button>
+
+          {active.onSwitchNative && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={handleSwitchNative}
+              title="Открыть обычную клавиатуру телефона"
+              className="h-9 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-extrabold text-slate-700 transition shrink-0"
+            >
+              АБВ
+            </button>
+          )}
+
+          <button
+            type="button"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={() => {
+              tapFeedback();
+              closeMathKeyboard();
+            }}
+            title="Скрыть клавиатуру"
+            className="w-9 h-9 rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-700 border border-slate-200 text-sm font-extrabold text-slate-600 transition shrink-0"
+          >
+            ⌄
+          </button>
+        </div>
+
+        {/* Основная сетка 5 колонок */}
+        <div className="grid grid-cols-5 gap-1.5">
+          {/* Первые 3 строки (4 клавиши + 5-я служебная колонка справа) */}
+          {rows.map((row, rowIdx) => (
+            <div key={rowIdx} className="contents">
+              {row.map((key) => (
+                <button
+                  key={key.label}
+                  type="button"
+                  title={key.title}
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={() => insertText(key.value)}
+                  className={`h-12 rounded-2xl border font-extrabold transition active:scale-95 ${
+                    key.kind === 'digit'
+                      ? 'bg-slate-50 hover:bg-indigo-50 border-slate-200 text-slate-900 font-mono text-lg shadow-2xs'
+                      : 'bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-800 text-lg'
+                  }`}
+                >
+                  {key.label}
+                </button>
+              ))}
+
+              {/* 5-я колонка справа */}
+              {rowIdx === 0 && (
+                <button
+                  type="button"
+                  title="Удалить символ"
+                  disabled={active.value.length === 0}
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={handleBackspace}
+                  className="h-12 rounded-2xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-lg font-extrabold disabled:opacity-40 transition active:scale-95"
+                >
+                  ⌫
+                </button>
+              )}
+
+              {rowIdx === 1 && (
+                <button
+                  type="button"
+                  title={layout === 'num' ? 'Проценты' : 'Больше'}
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={() => insertText(layout === 'num' ? '%' : '>')}
+                  className="h-12 rounded-2xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 text-base font-extrabold transition active:scale-95"
+                >
+                  {layout === 'num' ? '%' : '>'}
+                </button>
+              )}
+
+              {rowIdx === 2 && (
+                <button
+                  type="button"
+                  title={layout === 'num' ? 'Градусы' : 'Черта дроби'}
+                  onPointerDown={(e) => e.preventDefault()}
+                  onClick={() => insertText(layout === 'num' ? '°' : '/')}
+                  className="h-12 rounded-2xl bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 text-lg font-extrabold transition active:scale-95"
+                >
+                  {layout === 'num' ? '°' : '/'}
+                </button>
+              )}
+            </div>
+          ))}
+
+          {/* Нижняя 4-я строка: Сброс, 0, Пробел, Проверить/Готово */}
+          <button
+            type="button"
+            title="Очистить поле"
+            disabled={active.value.length === 0}
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={handleClear}
+            className="h-12 rounded-2xl bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-sm font-extrabold disabled:opacity-40 transition active:scale-95"
+          >
+            C
+          </button>
+
+          <button
+            type="button"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={() => insertText('0')}
+            className="h-12 rounded-2xl bg-slate-50 hover:bg-indigo-50 border border-slate-200 text-slate-900 font-mono text-lg font-extrabold shadow-2xs transition active:scale-95"
+          >
+            0
+          </button>
+
+          <button
+            type="button"
+            title="Пробел (для смешанных чисел)"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={() => insertText(' ')}
+            className="h-12 rounded-2xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 text-xs font-extrabold transition active:scale-95"
+          >
+            ␣
+          </button>
+
+          <button
+            type="button"
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={handleSubmitKey}
+            className="col-span-2 h-12 rounded-2xl btn-tactile bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-xs sm:text-sm font-extrabold shadow-xs transition active:scale-95"
+          >
+            {active.examMode
+              ? '✓ Готово'
+              : active.submitLabel || '✓ Проверить'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+===== src/hooks/useGamification.ts =====
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { playSound } from '@/lib/audio/sound';
+import type {
+  BadgeDef,
+  StudentGamificationStats,
+  TopicStarProgress,
+} from '@/lib/gamification';
+
+type ActionType = 'slides_done' | 'practice_solved' | 'homework_done';
+
+export function useGamification(enabled = true) {
+  const [stats, setStats] = useState<StudentGamificationStats | null>(null);
+  const [starsMap, setStarsMap] = useState<Record<string, TopicStarProgress>>({});
+  const [rewardBanner, setRewardBanner] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const starsMapRef = useRef<Record<string, TopicStarProgress>>({});
+
+  useEffect(() => {
+    starsMapRef.current = starsMap;
+  }, [starsMap]);
+
+  const showBanner = useCallback((message: string) => {
+    setRewardBanner(message);
+    if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    bannerTimerRef.current = setTimeout(() => {
+      setRewardBanner(null);
+    }, 5000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) return;
+
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const res = await fetch('/api/student/gamification', {
+          cache: 'no-store',
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        if (data.stats) setStats(data.stats);
+        if (data.starsMap) setStarsMap(data.starsMap);
+      } catch (err) {
+        console.error('load gamification error:', err);
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
+
+  const recordAction = useCallback(
+    async (
+      topicId: string,
+      action: ActionType,
+      extra?: { solvedDelta?: number; solvedTotal?: number }
+    ) => {
+      if (!enabled || !topicId) return;
+
+      const current = starsMapRef.current[topicId];
+      if (action === 'slides_done' && current?.slides_done) return;
+      if (action === 'homework_done' && current?.homework_done) return;
+
+      try {
+        const res = await fetch('/api/student/gamification', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            topicId,
+            action,
+            ...extra,
+          }),
+        });
+        if (!res.ok) return;
+
+        const data = (await res.json()) as {
+          stats?: StudentGamificationStats;
+          topicStars?: TopicStarProgress;
+          awardedXp?: number;
+          newBadges?: BadgeDef[];
+        };
+
+        if (data.stats) setStats(data.stats);
+        if (data.topicStars) {
+          setStarsMap((prev) => ({
+            ...prev,
+            [topicId]: data.topicStars!,
+          }));
+        }
+
+        const xpGain = Number(data.awardedXp || 0);
+        const badges = Array.isArray(data.newBadges) ? data.newBadges : [];
+
+        if (xpGain > 0 || badges.length > 0) {
+          playSound('celebrate');
+          const parts: string[] = [];
+          if (xpGain > 0) parts.push(`+${xpGain} XP`);
+          if (badges.length > 0) {
+            parts.push(
+              `Новая награда: ${badges.map((b) => `${b.icon} ${b.title}`).join(', ')}`
+            );
+          }
+          showBanner(`🎉 ${parts.join(' · ')}`);
+        }
+      } catch (err) {
+        console.error('recordAction error:', err);
+      }
+    },
+    [enabled, showBanner]
+  );
+
+  const markSlidesDone = useCallback(
+    (topicId: string) => recordAction(topicId, 'slides_done'),
+    [recordAction]
+  );
+
+  const reportPracticeSolved = useCallback(
+    (topicId: string, solvedTotal?: number) =>
+      recordAction(
+        topicId,
+        'practice_solved',
+        solvedTotal !== undefined ? { solvedTotal } : { solvedDelta: 1 }
+      ),
+    [recordAction]
+  );
+
+  const markHomeworkDone = useCallback(
+    (topicId: string) => recordAction(topicId, 'homework_done'),
+    [recordAction]
+  );
+
+  return {
+    stats,
+    starsMap,
+    rewardBanner,
+    loading: enabled && !loaded,
+    markSlidesDone,
+    reportPracticeSolved,
+    markHomeworkDone,
+  };
+}
+
+===== src/lib/audio/sound.ts =====
+'use client';
+
+export type SoundKind = 'success' | 'error' | 'celebrate' | 'click';
+
+const STORAGE_KEY = 'mathhub_sound';
+let sharedCtx: AudioContext | null = null;
+
+function getAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  const AudioCtx =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtx) return null;
+  if (!sharedCtx) {
+    sharedCtx = new AudioCtx();
+  }
+  if (sharedCtx.state === 'suspended') {
+    sharedCtx.resume().catch(() => {});
+  }
+  return sharedCtx;
+}
+
+export function isSoundEnabled(): boolean {
+  if (typeof window === 'undefined') return true;
+  return window.localStorage.getItem(STORAGE_KEY) !== 'off';
+}
+
+export function setSoundEnabled(enabled: boolean): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(STORAGE_KEY, enabled ? 'on' : 'off');
+  window.dispatchEvent(new Event('mathhub-sound-change'));
+}
+
+function playTone(
+  ctx: AudioContext,
+  freq: number,
+  startOffset: number,
+  duration: number,
+  volume: number,
+  type: OscillatorType = 'sine',
+  endFreq?: number
+) {
+  const now = ctx.currentTime + startOffset;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, now);
+  if (endFreq !== undefined) {
+    osc.frequency.exponentialRampToValueAtTime(endFreq, now + duration);
+  }
+
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.linearRampToValueAtTime(volume, now + 0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + duration + 0.02);
+}
+
+export function playSound(kind: SoundKind): void {
+  if (typeof window === 'undefined' || !isSoundEnabled()) return;
+
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+
+    if (kind === 'success') {
+      // Тёплый звон маримбы вверх (C5 -> E5)
+      playTone(ctx, 523.25, 0, 0.14, 0.12, 'triangle');
+      playTone(ctx, 659.25, 0.09, 0.22, 0.14, 'triangle');
+      navigator.vibrate?.(15);
+    } else if (kind === 'celebrate') {
+      // Приятный аккорд-перелив (C5 -> E5 -> G5 -> C6)
+      playTone(ctx, 523.25, 0, 0.16, 0.11, 'triangle');
+      playTone(ctx, 659.25, 0.08, 0.16, 0.12, 'triangle');
+      playTone(ctx, 783.99, 0.16, 0.18, 0.12, 'triangle');
+      playTone(ctx, 1046.5, 0.24, 0.32, 0.14, 'sine');
+      navigator.vibrate?.([20, 40, 25]);
+    } else if (kind === 'error') {
+      // Мягкий тихий «тук» без резкого негатива
+      playTone(ctx, 210, 0, 0.14, 0.08, 'sine', 165);
+    } else if (kind === 'click') {
+      // Лёгкий щелчок
+      playTone(ctx, 580, 0, 0.04, 0.04, 'sine');
+    }
+  } catch {
+    // Игнорируем ограничения автовоспроизведения браузера
+  }
+}
+
+===== src/lib/auth/studentLogin.ts =====
+export const STUDENT_EMAIL_DOMAIN = 'student.mathhub.local';
+
+const CYRILLIC_MAP: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh',
+  з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o',
+  п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts',
+  ч: 'ch', ш: 'sh', щ: 'sh', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu',
+  я: 'ya',
+  // Казахские буквы
+  ә: 'a', ғ: 'g', қ: 'k', ң: 'n', ө: 'o', ұ: 'u', ү: 'u', һ: 'h', і: 'i',
+};
+
+export function transliterateToSlug(input: string): string {
+  return input
+    .toLowerCase()
+    .split('')
+    .map((ch) => CYRILLIC_MAP[ch] ?? ch)
+    .join('')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+export function normalizeStudentLogin(raw: string): string {
+  return transliterateToSlug(raw.trim());
+}
+
+export function studentLoginToEmail(login: string): string {
+  return `${normalizeStudentLogin(login)}@${STUDENT_EMAIL_DOMAIN}`;
+}
+
+export function studentPinToPassword(pin: string): string {
+  return `pin-${pin.trim()}`;
+}
+
+export function generatePinCode(): string {
+  return String(Math.floor(1000 + Math.random() * 9000));
+}
+
+export function buildBaseLogin(fullName: string, className: string): string {
+  const cleaned = fullName
+    .replace(/^\s*\d+[\.\)\-\s]+/, '')
+    .trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  const classSuffix = transliterateToSlug(className).slice(0, 4);
+
+  // Если указано «Фамилия Имя», берём имя (детям проще вводить), иначе первое слово
+  const primaryWord = parts.length >= 2 ? parts[1] : parts[0] || 'student';
+  const base = transliterateToSlug(primaryWord).slice(0, 8) || 'student';
+
+  return `${base}${classSuffix}`;
+}
+
+===== src/lib/format/cleanTopic.ts =====
+export function cleanSectionName(section: string): string {
+  const cleaned = section
+    .replace(/^\d+\.\d+[А-ЯЁA-Zа-яёa-z]?\s+/u, '')
+    .replace(/\s*\(\d+\s*ч\.?(?:ас(?:а|ов)?)?\)\s*$/iu, '')
+    .trim();
+  return cleaned || section;
+}
+
+export function getLocalDateISO(offsetDays = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function formatShortRuDate(isoDate: string): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  if (!y || !m || !d) return isoDate;
+  const date = new Date(y, m - 1, d);
+  return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+}
+
+export function getScheduleBadge(
+  lessonDate: string | null | undefined
+): 'today' | 'tomorrow' | 'upcoming' | 'past' | null {
+  if (!lessonDate) return null;
+  const today = getLocalDateISO(0);
+  const tomorrow = getLocalDateISO(1);
+  if (lessonDate === today) return 'today';
+  if (lessonDate === tomorrow) return 'tomorrow';
+  if (lessonDate > tomorrow) return 'upcoming';
+  return 'past';
+}
+
+===== src/lib/gamification.ts =====
+export const PRACTICE_STAR_TARGET = 3;
+
+export const XP_REWARDS = {
+  slides_done: 25,
+  practice_done: 35,
+  homework_done: 50,
+  perfect_lesson_bonus: 20,
+} as const;
+
+export interface TopicStarProgress {
+  topic_id: string;
+  slides_done: boolean;
+  practice_done: boolean;
+  practice_solved: number;
+  homework_done: boolean;
+}
+
+export interface StudentGamificationStats {
+  xp: number;
+  streak_days: number;
+  best_streak: number;
+  last_active_date: string | null;
+  badges: string[];
+}
+
+export interface BadgeDef {
+  id: string;
+  icon: string;
+  title: string;
+  description: string;
+}
+
+export const BADGES: BadgeDef[] = [
+  {
+    id: 'first_star',
+    icon: '🌟',
+    title: 'Первая звезда',
+    description: 'Зажги первую звезду в любом уроке',
+  },
+  {
+    id: 'perfect_lesson',
+    icon: '🏆',
+    title: 'Идеальный урок',
+    description: 'Собери все 3 звезды в одном уроке',
+  },
+  {
+    id: 'practice_fan',
+    icon: '🎮',
+    title: 'Мастер тренажёра',
+    description: 'Реши 15 примеров в интерактивных тренажёрах',
+  },
+  {
+    id: 'slides_reader',
+    icon: '📘',
+    title: 'Знаток теории',
+    description: 'Пройди презентации в 5 разных уроках',
+  },
+  {
+    id: 'streak_3',
+    icon: '🔥',
+    title: 'Разгон: 3 дня',
+    description: 'Занимайся 3 дня подряд без пропусков',
+  },
+  {
+    id: 'streak_7',
+    icon: '⚡',
+    title: 'Неделя силы',
+    description: 'Держи серию 7 дней подряд',
+  },
+  {
+    id: 'xp_500',
+    icon: '💎',
+    title: 'Клуб 500 XP',
+    description: 'Набери 500 очков опыта',
+  },
+  {
+    id: 'lessons_5_perfect',
+    icon: '👑',
+    title: 'Звёздная коллекция',
+    description: 'Собери 3 из 3 звёзд в 5 уроках',
+  },
+];
+
+export const LEVELS = [
+  { level: 1, title: 'Новичок', minXp: 0 },
+  { level: 2, title: 'Искатель', minXp: 100 },
+  { level: 3, title: 'Следопыт', minXp: 250 },
+  { level: 4, title: 'Знаток', minXp: 500 },
+  { level: 5, title: 'Мастер формул', minXp: 850 },
+  { level: 6, title: 'Чемпион', minXp: 1300 },
+  { level: 7, title: 'Профессор', minXp: 2000 },
+];
+
+export function getLevelInfo(xp: number) {
+  const safeXp = Math.max(0, Number(xp) || 0);
+  let current = LEVELS[0];
+  let next: (typeof LEVELS)[number] | null = LEVELS[1];
+
+  for (let i = 0; i < LEVELS.length; i++) {
+    if (safeXp >= LEVELS[i].minXp) {
+      current = LEVELS[i];
+      next = LEVELS[i + 1] ?? null;
+    }
+  }
+
+  const progressPct = next
+    ? Math.min(
+        100,
+        Math.round(((safeXp - current.minXp) / (next.minXp - current.minXp)) * 100)
+      )
+    : 100;
+
+  return {
+    ...current,
+    nextLevel: next,
+    progressPct,
+    xpToNext: next ? Math.max(0, next.minXp - safeXp) : 0,
+  };
+}
+
+export function getAlmatyDateStr(date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Almaty',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+export function getYesterdayAlmatyDateStr(): string {
+  const d = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  return getAlmatyDateStr(d);
+}
+
+export function pluralizeDays(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${n} день`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return `${n} дня`;
+  return `${n} дней`;
+}
+
+===== src/lib/keyboard/mathKeyboardStore.ts =====
+'use client';
+
+import type { RefObject } from 'react';
+
+export interface MathKeyboardConfig {
+  id: string;
+  value: string;
+  placeholder?: string;
+  submitLabel?: string;
+  examMode?: boolean;
+  disabled?: boolean;
+  onChange: (next: string) => void;
+  onSubmit?: () => void;
+  onSwitchNative?: () => void;
+  inputRef?: RefObject<HTMLInputElement | null>;
+}
+
+const listeners = new Set<() => void>();
+let snapshot: MathKeyboardConfig | null = null;
+
+function emit() {
+  for (const listener of listeners) {
+    listener();
+  }
+}
+
+export function subscribeMathKeyboard(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+export function getMathKeyboardSnapshot(): MathKeyboardConfig | null {
+  return snapshot;
+}
+
+export function openMathKeyboard(config: MathKeyboardConfig): void {
+  snapshot = { ...config };
+  emit();
+}
+
+export function syncMathKeyboard(
+  id: string,
+  patch: Partial<Omit<MathKeyboardConfig, 'id'>>
+): void {
+  if (!snapshot || snapshot.id !== id) return;
+
+  const uiChanged =
+    (patch.value !== undefined && patch.value !== snapshot.value) ||
+    (patch.placeholder !== undefined && patch.placeholder !== snapshot.placeholder) ||
+    (patch.submitLabel !== undefined && patch.submitLabel !== snapshot.submitLabel) ||
+    (patch.examMode !== undefined && patch.examMode !== snapshot.examMode) ||
+    (patch.disabled !== undefined && patch.disabled !== snapshot.disabled);
+
+  snapshot = { ...snapshot, ...patch };
+  if (uiChanged) {
+    emit();
+  }
+}
+
+export function updateMathKeyboardValue(id: string, nextValue: string): void {
+  if (!snapshot || snapshot.id !== id) return;
+  if (snapshot.value === nextValue) return;
+  snapshot = { ...snapshot, value: nextValue };
+  emit();
+}
+
+export function closeMathKeyboard(id?: string): void {
+  if (!snapshot) return;
+  if (id && snapshot.id !== id) return;
+  snapshot = null;
+  emit();
+}
+
+===== src/lib/math/utils.ts =====
+export function gcd(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y) {
+    const t = y;
+    y = x % y;
+    x = t;
+  }
+  return x || 1;
+}
+
+export function lcm(a: number, b: number): number {
+  return Math.abs(a * b) / gcd(a, b);
+}
+
+export function randInt(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+===== src/lib/media/compressImage.ts =====
+'use client';
+
+export async function compressImageFile(
+  file: File,
+  maxDimension = 1400,
+  quality = 0.78
+): Promise<File> {
+  if (!file.type.startsWith('image/')) return file;
+
+  return new Promise((resolve) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+
+    img.onload = () => {
+      try {
+        let { width, height } = img;
+        if (width > maxDimension || height > maxDimension) {
+          if (width >= height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) {
+          URL.revokeObjectURL(objectUrl);
+          resolve(file);
+          return;
+        }
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(
+          (blob) => {
+            URL.revokeObjectURL(objectUrl);
+            if (!blob || blob.size >= file.size) {
+              resolve(file);
+              return;
+            }
+            const baseName = file.name.replace(/\.[^.]+$/, '') || 'notebook';
+            resolve(new File([blob], `${baseName}.jpg`, { type: 'image/jpeg' }));
+          },
+          'image/jpeg',
+          quality
+        );
+      } catch {
+        URL.revokeObjectURL(objectUrl);
+        resolve(file);
+      }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve(file);
+    };
+
+    img.src = objectUrl;
+  });
+}
+
+===== src/lib/supabase/admin.ts =====
+import { createClient } from '@supabase/supabase-js';
+
+export function createAdminSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } }
+  );
+}
+
+===== src/lib/supabase/client.ts =====
+import { createBrowserClient } from '@supabase/ssr';
+
+export function createClient() {
+  return createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
+
+===== src/lib/supabase/server.ts =====
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+
+export async function createServerSupabase() {
+  const cookieStore = await cookies();
+
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            );
+          } catch {
+            // Игнорируется при вызове из Server Component
+          }
+        },
+      },
+    }
+  );
+}
+
+===== src/lib/theme/theme.ts =====
+'use client';
+
+export type AppTheme = 'ocean' | 'chalk' | 'sunset' | 'comic' | 'cosmos';
+
+const STORAGE_KEY = 'mathhub_theme';
+const THEME_EVENT = 'mathhub-theme-change';
+
+const LEGACY_MAP: Record<string, AppTheme> = {
+  bright: 'ocean',
+  lab: 'ocean',
+  academy: 'ocean',
+  mint: 'chalk',
+  focus: 'sunset',
+  zine: 'comic',
+  blueprint: 'cosmos',
+};
+
+export interface ThemeOption {
+  id: AppTheme;
+  icon: string;
+  label: string;
+  desc: string;
+  previewBg: string;
+  previewCard: string;
+  previewAccent: string;
+  isDark?: boolean;
+}
+
+export const THEME_OPTIONS: ThemeOption[] = [
+  {
+    id: 'ocean',
+    icon: '🌊',
+    label: 'Океанское стекло',
+    desc: 'Бирюзовый градиент и матовое стекло',
+    previewBg: 'linear-gradient(135deg, #7DD3FC, #99F6E4, #C4B5FD)',
+    previewCard: 'rgba(255,255,255,0.82)',
+    previewAccent: '#0284C7',
+  },
+  {
+    id: 'chalk',
+    icon: '🟢',
+    label: 'Школьная доска',
+    desc: 'Зелёная доска с меловыми формулами',
+    previewBg: 'radial-gradient(circle at 30% 30%, #194D3E, #0B211B)',
+    previewCard: '#14382D',
+    previewAccent: '#FACC15',
+    isDark: true,
+  },
+  {
+    id: 'sunset',
+    icon: '🌅',
+    label: 'Тёплый закат',
+    desc: 'Абрикос, солнце и терракота',
+    previewBg: 'linear-gradient(135deg, #FDBA74, #FDA4AF)',
+    previewCard: '#FFFBF5',
+    previewAccent: '#EA580C',
+  },
+  {
+    id: 'comic',
+    icon: '⚡',
+    label: 'Комикс-зин',
+    desc: 'Жёлтый поп-арт, контуры и Unbounded',
+    previewBg: '#FDE047',
+    previewCard: '#FFFFFF',
+    previewAccent: '#2563EB',
+  },
+  {
+    id: 'cosmos',
+    icon: '🌌',
+    label: 'Кибер-космос',
+    desc: 'Звёзды, неон и тёмное стекло',
+    previewBg: 'linear-gradient(135deg, #090D24, #311056, #0C3650)',
+    previewCard: 'rgba(15,23,42,0.85)',
+    previewAccent: '#6366F1',
+    isDark: true,
+  },
+];
+
+export function normalizeTheme(raw: string | null | undefined): AppTheme {
+  if (!raw) return 'ocean';
+  if (raw in LEGACY_MAP) return LEGACY_MAP[raw];
+  if (THEME_OPTIONS.some((t) => t.id === raw)) return raw as AppTheme;
+  return 'ocean';
+}
+
+export function getSavedTheme(): AppTheme {
+  if (typeof window === 'undefined') return 'ocean';
+  try {
+    return normalizeTheme(window.localStorage.getItem(STORAGE_KEY));
+  } catch {
+    return 'ocean';
+  }
+}
+
+export function applyTheme(theme: AppTheme): void {
+  if (typeof window === 'undefined') return;
+  document.documentElement.setAttribute('data-theme', theme);
+  try {
+    window.localStorage.setItem(STORAGE_KEY, theme);
+  } catch {
+    // Игнорируем ограничения приватного режима
+  }
+  window.dispatchEvent(new Event(THEME_EVENT));
+}
+
+export function subscribeTheme(callback: () => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  window.addEventListener(THEME_EVENT, callback);
+  window.addEventListener('storage', callback);
+  return () => {
+    window.removeEventListener(THEME_EVENT, callback);
+    window.removeEventListener('storage', callback);
+  };
+}
+
+===== src/middleware.ts =====
+import { createServerClient } from '@supabase/ssr';
+import { NextResponse, type NextRequest } from 'next/server';
+
+export async function middleware(request: NextRequest) {
+  if (request.nextUrl.pathname === '/') {
+    return NextResponse.redirect(new URL('/today', request.url));
+  }
+  let response = NextResponse.next({ request });
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () => request.cookies.getAll(),
+        setAll: (cookiesToSet) => {
+          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+          response = NextResponse.next({ request });
+          cookiesToSet.forEach(({ name, value, options }) =>
+            response.cookies.set(name, value, options)
+          );
+        },
+      },
+    }
+  );
+
+  await supabase.auth.getUser();
+  return response;
+}
+
+export const config = {
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
+};
+
+===== src/types/db.ts =====
+export type UserRole = 'student' | 'teacher';
+
+export interface Profile {
+  id: string;
+  full_name: string;
+  role: UserRole;
+  grade_number: number | null;
+  class_name: string;
+  classroom_id?: string | null;
+}
+
+export interface Course {
+  id: string;
+  slug: string;
+  grade_number: number;
+  subject: string;
+  title: string;
+  academic_year: string;
+  total_hours: number;
+  is_published: boolean;
+}
+
+export interface Topic {
+  id: string;
+  course_id: string;
+  order_index: number;
+  quarter: 1 | 2 | 3 | 4;
+  section: string;
+  title: string;
+  dates: string;
+  hours: number;
+  objectives: string[];
+  theory_md: string;
+  slides?: LessonSlide[] | null;
+  sim_type: string;
+  badges: string[];
+  is_assessment: boolean;
+  value_key: 'adal' | 'taza' | 'const';
+  value_example: string;
+  teacher_notes: string;
+}
+
+export interface Material {
+  id: string;
+  topic_id: string;
+  kind: 'pdf' | 'presentation' | 'video' | 'link' | 'iframe_game';
+  title: string;
+  description: string;
+  url: string | null;
+  storage_path: string | null;
+  file_name: string | null;
+}
+
+export interface HomeworkTask {
+  id: string;
+  topic_id: string;
+  order_index: number;
+  type: 'test' | 'input' | 'open';
+  difficulty: 'base' | 'standard' | 'pro';
+  question_md: string;
+  options: string[];
+  points: number;
+}
+
+export interface Submission {
+  id: string;
+  task_id: string;
+  student_id: string;
+  answer_text: string;
+  photo_path: string | null;
+  is_correct: boolean | null;
+  score: number;
+  status: 'checked' | 'pending_review' | 'graded';
+  teacher_comment: string;
+  updated_at: string;
+}
+
+export interface ClassScheduleItem {
+  id: string;
+  classroom_id: string;
+  topic_id: string;
+  lesson_date: string;
+  hw_due_date: string | null;
+  note: string;
+}
+export type SlideVisual =
+  | {
+      kind: 'formula_hero';
+      formula: string;
+      caption?: string;
+    }
+  | {
+      kind: 'fraction_bar';
+      numerator: number;
+      denominator: number;
+      label?: string;
+      compareNumerator?: number;
+      compareDenominator?: number;
+    }
+  | {
+      kind: 'number_line';
+      min: number;
+      max: number;
+      points: { value: number; label: string; highlight?: boolean }[];
+      jump?: { from: number; to: number; label?: string };
+    }
+  | {
+      kind: 'percent_grid';
+      percent: number;
+      label?: string;
+    }
+  | {
+      kind: 'angle';
+      degrees: number;
+      label?: string;
+    }
+  | {
+      kind: 'venn';
+      leftLabel: string;
+      rightLabel: string;
+      leftItems: string[];
+      rightItems: string[];
+      bothItems: string[];
+    }
+  | {
+      kind: 'compare';
+      leftTitle: string;
+      leftText: string;
+      rightTitle: string;
+      rightText: string;
+    };
+
+export type SlideType =
+  | 'intro'
+  | 'concept'
+  | 'example'
+  | 'trap'
+  | 'quiz'
+  | 'summary';
+
+export interface LessonSlide {
+  id: string;
+  type: SlideType;
+  title: string;
+  body_md: string;
+  visual?: SlideVisual | null;
+  steps?: string[];
+  wrong_md?: string;
+  right_md?: string;
+  quiz_options?: string[];
+  quiz_correct_index?: number;
+  quiz_explanation?: string;
+  takeaways?: string[];
+}
