@@ -48,6 +48,15 @@ export interface TopicScoreEntry {
   score: number;
 }
 
+interface TopicHeatStats {
+  topic: JournalTopic;
+  submittedCount: number;
+  completedCount: number;
+  avgPct: number | null;
+  lowStudents: { id: string; name: string; score: number }[];
+  level: 'none' | 'good' | 'warn' | 'gap';
+}
+
 interface Props {
   initialClassrooms: ClassroomRow[];
   initialStudents: StudentRow[];
@@ -55,6 +64,16 @@ interface Props {
   topics: JournalTopic[];
   progressList: ProgressEntry[];
   topicScores: TopicScoreEntry[];
+}
+
+function getScoreBadgeClasses(score: number, maxPoints: number, heatmapOn: boolean): string {
+  if (!heatmapOn || maxPoints <= 0) {
+    return 'bg-indigo-100 text-indigo-800';
+  }
+  const pct = (score / maxPoints) * 100;
+  if (pct >= 80) return 'bg-emerald-100 text-emerald-800 border border-emerald-300';
+  if (pct >= 50) return 'bg-amber-100 text-amber-800 border border-amber-300';
+  return 'bg-rose-100 text-rose-800 border border-rose-300';
 }
 
 export default function JournalClient({
@@ -69,10 +88,12 @@ export default function JournalClient({
   const [classrooms, setClassrooms] = useState<ClassroomRow[]>(initialClassrooms);
   const [students, setStudents] = useState<StudentRow[]>(initialStudents);
 
-  // Фильтры матрицы
+  // Фильтры матрицы и тепловой карты
   const [selectedClassId, setSelectedClassId] = useState<string>('all');
   const [selectedCourseId, setSelectedCourseId] = useState<string>(courses[0]?.id || '');
   const [selectedQuarter, setSelectedQuarter] = useState<number>(1);
+  const [heatmapOn, setHeatmapOn] = useState<boolean>(true);
+  const [focusedTopicId, setFocusedTopicId] = useState<string | null>(null);
 
   // Форма создания класса
   const [newClassName, setNewClassName] = useState('');
@@ -111,13 +132,15 @@ export default function JournalClient({
     return map;
   }, [progressList]);
 
-  const scoreMap = useMemo(() => {
-    const map = new Map<string, number>();
+  const { scoreMap, submittedSet } = useMemo(() => {
+    const scores = new Map<string, number>();
+    const submitted = new Set<string>();
     for (const s of topicScores) {
       const k = `${s.student_id}:${s.topic_id}`;
-      map.set(k, (map.get(k) || 0) + s.score);
+      submitted.add(k);
+      scores.set(k, (scores.get(k) || 0) + s.score);
     }
-    return map;
+    return { scoreMap: scores, submittedSet: submitted };
   }, [topicScores]);
 
   const classMap = useMemo(
@@ -142,6 +165,67 @@ export default function JournalClient({
       })
       .sort((a, b) => a.full_name.localeCompare(b.full_name, 'ru'));
   }, [students, selectedClassId]);
+
+  // Аналитика пробелов по каждой теме текущей четверти и выборки учеников
+  const topicHeatMap = useMemo(() => {
+    const statsMap = new Map<string, TopicHeatStats>();
+
+    for (const topic of visibleTopics) {
+      let submittedCount = 0;
+      let completedCount = 0;
+      let scoreSum = 0;
+      const lowStudents: { id: string; name: string; score: number }[] = [];
+
+      for (const st of visibleStudents) {
+        const key = `${st.id}:${topic.id}`;
+        const p = progressMap.get(key);
+        if (p?.completed) completedCount++;
+
+        if (topic.maxPoints > 0 && submittedSet.has(key)) {
+          const sc = scoreMap.get(key) || 0;
+          submittedCount++;
+          scoreSum += sc;
+          if ((sc / topic.maxPoints) * 100 < 60) {
+            lowStudents.push({ id: st.id, name: st.full_name, score: sc });
+          }
+        }
+      }
+
+      let avgPct: number | null = null;
+      let level: TopicHeatStats['level'] = 'none';
+
+      if (topic.maxPoints > 0 && submittedCount > 0) {
+        avgPct = Math.round((scoreSum / (submittedCount * topic.maxPoints)) * 100);
+        const lowShare = lowStudents.length / submittedCount;
+        if (avgPct < 55 || lowShare >= 0.5) {
+          level = 'gap';
+        } else if (avgPct < 75 || lowShare >= 0.3) {
+          level = 'warn';
+        } else {
+          level = 'good';
+        }
+      }
+
+      statsMap.set(topic.id, {
+        topic,
+        submittedCount,
+        completedCount,
+        avgPct,
+        lowStudents,
+        level,
+      });
+    }
+
+    return statsMap;
+  }, [visibleTopics, visibleStudents, progressMap, scoreMap, submittedSet]);
+
+  const gapTopics = useMemo(() => {
+    return Array.from(topicHeatMap.values())
+      .filter((item) => item.level === 'gap' || item.level === 'warn')
+      .sort((a, b) => (a.avgPct ?? 100) - (b.avgPct ?? 100));
+  }, [topicHeatMap]);
+
+  const focusedStats = focusedTopicId ? topicHeatMap.get(focusedTopicId) || null : null;
 
   async function handleCreateClass(e: React.FormEvent) {
     e.preventDefault();
@@ -362,11 +446,12 @@ export default function JournalClient({
         const key = `${st.id}:${t.id}`;
         const p = progressMap.get(key);
         const sc = scoreMap.get(key) || 0;
+        const hasSub = submittedSet.has(key);
         if (p?.completed) doneCount++;
         totalScore += sc;
         totalSim += p?.sim_correct_count || 0;
 
-        if (t.maxPoints > 0 && sc > 0) return `${sc}/${t.maxPoints}`;
+        if (t.maxPoints > 0 && hasSub) return `${sc}/${t.maxPoints}`;
         if (p?.completed) return '✓';
         return '';
       });
@@ -488,53 +573,189 @@ export default function JournalClient({
           </div>
         )}
 
-        {/* ВКЛАДКА 1: Сводная матрица */}
+        {/* ВКЛАДКА 1: Сводная матрица + Тепловая карта пробелов */}
         {tab === 'matrix' && (
           <div className="space-y-4">
-            <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-wrap items-center gap-3">
-              <select
-                value={selectedClassId}
-                onChange={(e) => setSelectedClassId(e.target.value)}
-                className="px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
-              >
-                <option value="all">Все классы ({students.length})</option>
-                {classrooms.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    Класс {c.name} ({c.join_code})
-                  </option>
-                ))}
-                <option value="unassigned">Без класса</option>
-              </select>
+            <div className="bg-white rounded-2xl border border-slate-200 p-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => {
+                    setSelectedClassId(e.target.value);
+                    setFocusedTopicId(null);
+                  }}
+                  className="px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
+                >
+                  <option value="all">Все классы ({students.length})</option>
+                  {classrooms.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      Класс {c.name} ({c.join_code})
+                    </option>
+                  ))}
+                  <option value="unassigned">Без класса</option>
+                </select>
 
-              <select
-                value={selectedCourseId}
-                onChange={(e) => setSelectedCourseId(e.target.value)}
-                className="px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
-              >
-                {courses.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.title}
-                  </option>
-                ))}
-              </select>
+                <select
+                  value={selectedCourseId}
+                  onChange={(e) => {
+                    setSelectedCourseId(e.target.value);
+                    setFocusedTopicId(null);
+                  }}
+                  className="px-3 py-2 text-xs font-bold bg-slate-50 border border-slate-200 rounded-xl"
+                >
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.title}
+                    </option>
+                  ))}
+                </select>
 
-              <div className="inline-flex p-1 bg-slate-100 rounded-xl">
-                {[1, 2, 3, 4].map((q) => (
-                  <button
-                    key={q}
-                    type="button"
-                    onClick={() => setSelectedQuarter(q)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
-                      selectedQuarter === q
-                        ? 'bg-indigo-600 text-white'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    {q} четверть
-                  </button>
-                ))}
+                <div className="inline-flex p-1 bg-slate-100 rounded-xl">
+                  {[1, 2, 3, 4].map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => {
+                        setSelectedQuarter(q);
+                        setFocusedTopicId(null);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                        selectedQuarter === q
+                          ? 'bg-indigo-600 text-white'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {q} четверть
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                {heatmapOn && (
+                  <div className="hidden xl:flex items-center gap-2 text-[11px] font-bold text-slate-500">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-emerald-400" />
+                      ≥80%
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-amber-400" />
+                      50–79%
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm bg-rose-400" />
+                      &lt;50% пробел
+                    </span>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHeatmapOn((v) => !v);
+                    setFocusedTopicId(null);
+                  }}
+                  className={`px-3 py-2 rounded-xl border text-xs font-extrabold transition ${
+                    heatmapOn
+                      ? 'bg-rose-50 border-rose-300 text-rose-800'
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-indigo-300'
+                  }`}
+                >
+                  {heatmapOn ? '🔥 Тепловая карта: ВКЛ' : '🔥 Тепловая карта: ВЫКЛ'}
+                </button>
               </div>
             </div>
+
+            {/* Сводка проблемных тем для повторения перед СОР */}
+            {heatmapOn && visibleStudents.length > 0 && gapTopics.length > 0 && (
+              <div className="bg-white rounded-3xl border-2 border-amber-200 p-4 sm:p-5 space-y-3 animate-pop">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-xs sm:text-sm font-extrabold text-slate-900">
+                      🎯 Темы с пробелами — стоит повторить перед СОР ({gapTopics.length})
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      Нажми на тему, чтобы подсветить столбец в журнале и увидеть список учеников ниже 60%.
+                    </p>
+                  </div>
+                  {focusedTopicId && (
+                    <button
+                      type="button"
+                      onClick={() => setFocusedTopicId(null)}
+                      className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[11px] font-bold text-slate-600"
+                    >
+                      Снять выделение
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {gapTopics.map((item) => {
+                    const isFocused = focusedTopicId === item.topic.id;
+                    const isCritical = item.level === 'gap';
+                    return (
+                      <button
+                        key={item.topic.id}
+                        type="button"
+                        onClick={() =>
+                          setFocusedTopicId((prev) =>
+                            prev === item.topic.id ? null : item.topic.id
+                          )
+                        }
+                        className={`text-left px-3 py-2 rounded-xl border text-xs transition flex items-center gap-2 ${
+                          isFocused
+                            ? 'ring-2 ring-indigo-500 border-indigo-400 bg-indigo-50'
+                            : isCritical
+                              ? 'bg-rose-50 border-rose-200 hover:border-rose-300 text-rose-900'
+                              : 'bg-amber-50 border-amber-200 hover:border-amber-300 text-amber-900'
+                        }`}
+                      >
+                        <span className="font-extrabold">№{item.topic.order_index}</span>
+                        <span className="font-bold max-w-[200px] truncate">
+                          {item.topic.title}
+                        </span>
+                        <span
+                          className={`px-1.5 py-0.5 rounded-md text-[10px] font-extrabold tabular-nums ${
+                            isCritical
+                              ? 'bg-rose-100 text-rose-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          ср. {item.avgPct}%
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {focusedStats && (
+                  <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+                    <div className="font-extrabold text-slate-900">
+                      Урок №{focusedStats.topic.order_index}. {focusedStats.topic.title} — средний результат{' '}
+                      <span className="text-rose-700">{focusedStats.avgPct}%</span> (сдали{' '}
+                      {focusedStats.submittedCount} из {visibleStudents.length} уч.)
+                    </div>
+                    {focusedStats.lowStudents.length > 0 ? (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-slate-500 font-semibold">Нужна помощь:</span>
+                        {focusedStats.lowStudents.map((ls) => (
+                          <span
+                            key={ls.id}
+                            className="px-2 py-0.5 rounded-lg bg-rose-100 text-rose-800 font-bold"
+                          >
+                            {ls.name} ({ls.score}/{focusedStats.topic.maxPoints})
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-slate-500">
+                        У сдавших учеников нет критических провалов, но средний балл ниже 75%.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {visibleStudents.length === 0 ? (
               <div className="bg-white rounded-3xl border border-slate-200 p-10 text-center text-sm text-slate-500">
@@ -558,24 +779,45 @@ export default function JournalClient({
                       <th className="px-3 py-3 font-bold text-slate-600 text-center whitespace-nowrap border-r border-slate-200">
                         🏆 Симул.
                       </th>
-                      {visibleTopics.map((t) => (
-                        <th
-                          key={t.id}
-                          title={`${t.order_index}. ${t.title}`}
-                          className={`px-2 py-3 text-center font-bold min-w-[52px] cursor-help ${
-                            t.is_assessment
-                              ? 'bg-amber-50 text-amber-800'
-                              : 'text-slate-600'
-                          }`}
-                        >
-                          <div>№{t.order_index}</div>
-                          {t.is_assessment && (
-                            <div className="text-[9px] font-extrabold text-amber-700">
-                              СОР
-                            </div>
-                          )}
-                        </th>
-                      ))}
+                      {visibleTopics.map((t) => {
+                        const st = topicHeatMap.get(t.id);
+                        const isFocused = focusedTopicId === t.id;
+                        let headCls = t.is_assessment
+                          ? 'bg-amber-50 text-amber-800'
+                          : 'text-slate-600';
+                        if (isFocused) {
+                          headCls = 'bg-indigo-100 text-indigo-900';
+                        } else if (heatmapOn && st?.level === 'gap') {
+                          headCls = 'bg-rose-50 text-rose-800';
+                        }
+
+                        return (
+                          <th
+                            key={t.id}
+                            onClick={() =>
+                              setFocusedTopicId((prev) => (prev === t.id ? null : t.id))
+                            }
+                            title={`${t.order_index}. ${t.title}${
+                              st?.avgPct !== null && st?.avgPct !== undefined
+                                ? ` · Ср. балл: ${st.avgPct}%`
+                                : ''
+                            }`}
+                            className={`px-2 py-3 text-center font-bold min-w-[56px] cursor-pointer transition ${headCls}`}
+                          >
+                            <div>№{t.order_index}</div>
+                            {t.is_assessment && (
+                              <div className="text-[9px] font-extrabold text-amber-700">
+                                СОР
+                              </div>
+                            )}
+                            {heatmapOn && st?.level === 'gap' && !t.is_assessment && (
+                              <div className="text-[9px] font-extrabold text-rose-600">
+                                пробел
+                              </div>
+                            )}
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -588,10 +830,11 @@ export default function JournalClient({
                         const key = `${st.id}:${t.id}`;
                         const p = progressMap.get(key);
                         const sc = scoreMap.get(key) || 0;
+                        const hasSub = submittedSet.has(key);
                         if (p?.completed) doneCount++;
                         totalScore += sc;
                         totalSim += p?.sim_correct_count || 0;
-                        return { t, p, sc };
+                        return { t, p, sc, hasSub };
                       });
 
                       const clsName = st.classroom_id
@@ -617,31 +860,107 @@ export default function JournalClient({
                           <td className="px-3 py-2.5 text-center font-bold text-emerald-700 border-r border-slate-200 tabular-nums">
                             {totalSim}
                           </td>
-                          {topicCells.map(({ t, p, sc }) => (
-                            <td
-                              key={t.id}
-                              title={`${t.title} — ${
-                                p?.completed ? 'Пройдена' : 'Не отмечена'
-                              }${t.maxPoints > 0 ? `, ДЗ: ${sc}/${t.maxPoints}` : ''}`}
-                              className="px-1.5 py-2.5 text-center"
-                            >
-                              {sc > 0 ? (
-                                <span className="inline-block px-1.5 py-0.5 rounded-md bg-indigo-100 text-indigo-800 font-bold text-[11px] tabular-nums">
-                                  {sc}/{t.maxPoints}
-                                </span>
-                              ) : p?.completed ? (
-                                <span className="inline-flex w-5 h-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 font-bold">
-                                  ✓
-                                </span>
-                              ) : (
-                                <span className="text-slate-300">·</span>
-                              )}
-                            </td>
-                          ))}
+                          {topicCells.map(({ t, p, sc, hasSub }) => {
+                            const isFocused = focusedTopicId === t.id;
+                            const showScore = t.maxPoints > 0 && (hasSub || sc > 0);
+                            return (
+                              <td
+                                key={t.id}
+                                title={`${t.title} — ${
+                                  p?.completed ? 'Пройдена' : 'Не отмечена'
+                                }${
+                                  showScore
+                                    ? `, ДЗ: ${sc}/${t.maxPoints} (${Math.round(
+                                        (sc / t.maxPoints) * 100
+                                      )}%)`
+                                    : ''
+                                }${
+                                  p?.sim_correct_count
+                                    ? `, тренажёр: ${p.sim_correct_count}`
+                                    : ''
+                                }`}
+                                className={`px-1.5 py-2.5 text-center ${
+                                  isFocused ? 'bg-indigo-50/50' : ''
+                                }`}
+                              >
+                                {showScore ? (
+                                  <span
+                                    className={`inline-block px-1.5 py-0.5 rounded-md font-bold text-[11px] tabular-nums ${getScoreBadgeClasses(
+                                      sc,
+                                      t.maxPoints,
+                                      heatmapOn
+                                    )}`}
+                                  >
+                                    {sc}/{t.maxPoints}
+                                  </span>
+                                ) : p?.completed ? (
+                                  <span className="inline-flex w-5 h-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 font-bold">
+                                    ✓
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-300">·</span>
+                                )}
+                              </td>
+                            );
+                          })}
                         </tr>
                       );
                     })}
                   </tbody>
+
+                  {/* Итоговая полоса тепловой карты по классу */}
+                  {heatmapOn && (
+                    <tfoot>
+                      <tr className="bg-slate-50 border-t-2 border-slate-200">
+                        <td className="sticky left-0 z-10 bg-slate-50 px-4 py-2.5 font-extrabold text-slate-700 border-r border-slate-200">
+                          🔥 Ср. усвоение ДЗ
+                        </td>
+                        <td colSpan={3} className="px-3 py-2.5 text-center text-[11px] text-slate-500 border-r border-slate-200">
+                          По сдавшим
+                        </td>
+                        {visibleTopics.map((t) => {
+                          const st = topicHeatMap.get(t.id);
+                          const isFocused = focusedTopicId === t.id;
+                          if (!st || st.avgPct === null) {
+                            return (
+                              <td
+                                key={t.id}
+                                className={`px-1.5 py-2.5 text-center text-[11px] text-slate-400 ${
+                                  isFocused ? 'bg-indigo-50/50' : ''
+                                }`}
+                              >
+                                —
+                              </td>
+                            );
+                          }
+                          const pillCls =
+                            st.level === 'good'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : st.level === 'warn'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-rose-100 text-rose-800';
+                          return (
+                            <td
+                              key={t.id}
+                              onClick={() =>
+                                setFocusedTopicId((prev) => (prev === t.id ? null : t.id))
+                              }
+                              title={`Сдали ${st.submittedCount} из ${visibleStudents.length} уч. · Средний балл: ${st.avgPct}%`}
+                              className={`px-1 py-2.5 text-center cursor-pointer ${
+                                isFocused ? 'bg-indigo-50/50' : ''
+                              }`}
+                            >
+                              <span
+                                className={`inline-block px-1.5 py-0.5 rounded-md text-[10px] font-extrabold tabular-nums ${pillCls}`}
+                              >
+                                {st.avgPct}%
+                              </span>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
             )}
@@ -759,7 +1078,6 @@ export default function JournalClient({
 
             {/* Правая колонка: массовое добавление и список учеников */}
             <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-5 space-y-5">
-              {/* Быстрое добавление учеников списком (без email) */}
               {classrooms.length > 0 && (
                 <form
                   onSubmit={handleBulkAddStudents}

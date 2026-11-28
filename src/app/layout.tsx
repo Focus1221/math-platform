@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import {
   Golos_Text,
   JetBrains_Mono,
@@ -9,6 +9,7 @@ import {
 import 'katex/dist/katex.min.css';
 import './globals.css';
 import ThemeBackdrop from '@/components/layout/ThemeBackdrop';
+import PwaRegister from '@/components/layout/PwaRegister';
 
 const manrope = Manrope({
   subsets: ['latin', 'cyrillic'],
@@ -44,6 +45,17 @@ export const metadata: Metadata = {
   title: 'MathHub — Интерактивная математика',
   description:
     'Интерактивная платформа по математике: наглядные уроки, тренажёры, ДЗ с автопроверкой и ИИ-помощник Сократ.',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'MathHub',
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: '#0284C7',
+  width: 'device-width',
+  initialScale: 1,
 };
 
 const THEME_INIT_SCRIPT = `
@@ -83,6 +95,7 @@ export default function RootLayout({
       <body className="antialiased min-h-screen overflow-x-clip">
         <ThemeBackdrop />
         <div className="relative z-10 min-h-screen">{children}</div>
+        <PwaRegister />
       </body>
     </html>
   );

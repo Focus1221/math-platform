@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import MathMarkdown from './MathMarkdown';
 import MathKeypad, { type KeypadKey } from '@/components/ui/MathKeypad';
@@ -25,6 +25,12 @@ interface DraftGenTask {
   solution_hint: string;
 }
 
+interface ExamSession {
+  startedAt: number;
+  endsAt: number;
+  finishedAt?: number;
+}
+
 const DIFF_META: Record<HomeworkTask['difficulty'], { label: string; cls: string }> = {
   base: { label: 'База', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   standard: { label: 'Стандарт', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
@@ -39,8 +45,43 @@ const HOMEWORK_KEYS: KeypadKey[] = [
   { label: '°', value: '°', title: 'Градусы' },
 ];
 
+// Детерминированное перемешивание (одинаковое при F5, разное у каждого ученика)
+function hashString(str: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function seededShuffle<T>(items: T[], seed: number): T[] {
+  const arr = [...items];
+  let s = seed >>> 0;
+  for (let i = arr.length - 1; i > 0; i--) {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    const rnd = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    const j = Math.floor(rnd * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function formatCountdown(totalSeconds: number): string {
+  const safe = Math.max(0, Math.floor(totalSeconds));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
 function getDraftStorageKey(userId: string | undefined, topicId: string): string {
   return `mathhub_hw_drafts_${userId || 'guest'}_${topicId}`;
+}
+
+function getExamStorageKey(userId: string | undefined, topicId: string): string {
+  return `mathhub_exam_session_${userId || 'guest'}_${topicId}`;
 }
 
 function readLocalDrafts(storageKey: string): Record<string, string> {
@@ -73,14 +114,51 @@ function writeLocalDrafts(storageKey: string, drafts: Record<string, string>): v
   }
 }
 
+function readExamSession(storageKey: string): ExamSession | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ExamSession>;
+    if (
+      !parsed ||
+      typeof parsed.startedAt !== 'number' ||
+      typeof parsed.endsAt !== 'number'
+    ) {
+      return null;
+    }
+    return {
+      startedAt: parsed.startedAt,
+      endsAt: parsed.endsAt,
+      finishedAt:
+        typeof parsed.finishedAt === 'number' ? parsed.finishedAt : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeExamSession(storageKey: string, session: ExamSession): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(session));
+  } catch {
+    // Игнорируем ограничения приватного режима
+  }
+}
+
 function HomeworkShortInput({
   value,
   busy,
+  examMode = false,
+  disabled = false,
   onChange,
   onSubmit,
 }: {
   value: string;
   busy: boolean;
+  examMode?: boolean;
+  disabled?: boolean;
   onChange: (next: string) => void;
   onSubmit: () => void;
 }) {
@@ -91,7 +169,7 @@ function HomeworkShortInput({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          onSubmit();
+          if (!examMode && !disabled) onSubmit();
         }}
         className="flex flex-col sm:flex-row gap-2 max-w-md"
       >
@@ -99,28 +177,33 @@ function HomeworkShortInput({
           ref={inputRef}
           type="text"
           autoComplete="off"
+          disabled={disabled || busy}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder="Введи ответ (напр. 42 или 3/4)..."
-          className="flex-1 px-4 py-2.5 text-sm font-semibold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-indigo-500"
+          className="flex-1 px-4 py-2.5 text-sm font-semibold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-indigo-500 disabled:opacity-60"
         />
-        <button
-          type="submit"
-          disabled={busy}
-          className="btn-tactile px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
-        >
-          {busy ? 'Проверка...' : 'Проверить'}
-        </button>
+        {!examMode && (
+          <button
+            type="submit"
+            disabled={busy || disabled}
+            className="btn-tactile px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
+          >
+            {busy ? 'Проверка...' : 'Проверить'}
+          </button>
+        )}
       </form>
 
-      <MathKeypad
-        value={value}
-        onChange={onChange}
-        inputRef={inputRef}
-        symbols={HOMEWORK_KEYS}
-        disabled={busy}
-        align="left"
-      />
+      {!disabled && (
+        <MathKeypad
+          value={value}
+          onChange={onChange}
+          inputRef={inputRef}
+          symbols={HOMEWORK_KEYS}
+          disabled={busy || disabled}
+          align="left"
+        />
+      )}
     </div>
   );
 }
@@ -132,7 +215,20 @@ export default function HomeworkTab({
   onHomeworkSubmitted,
 }: Props) {
   const supabase = createClient();
-  const draftStorageKey = getDraftStorageKey(profile?.id, topic.id);
+  const profileId = profile?.id;
+  const isTeacher = profile?.role === 'teacher';
+  const draftStorageKey = getDraftStorageKey(profileId, topic.id);
+  const examStorageKey = getExamStorageKey(profileId, topic.id);
+
+  // Режим СОР/СОЧ с перемешиванием и таймером активен только для учеников
+  const isStudentExam = Boolean(topic.is_assessment && !canEdit && !isTeacher && profile);
+  const examDurationMin = /соч/i.test(topic.title) ? 40 : 20;
+  const examVariant = useMemo(() => {
+    if (!profileId) return 'Вариант А';
+    return hashString(`${profileId}:${topic.id}`) % 2 === 0
+      ? 'Вариант А'
+      : 'Вариант Б';
+  }, [profileId, topic.id]);
 
   const [tasks, setTasks] = useState<HomeworkTask[]>([]);
   const [submissions, setSubmissions] = useState<Record<string, Submission>>({});
@@ -142,6 +238,12 @@ export default function HomeworkTab({
   const [hints, setHints] = useState<Record<string, string>>({});
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Состояние экзамена СОР / СОЧ
+  const [examSession, setExamSession] = useState<ExamSession | null>(null);
+  const [remainingSec, setRemainingSec] = useState<number | null>(null);
+  const [submittingExam, setSubmittingExam] = useState(false);
+  const [examAutoExpired, setExamAutoExpired] = useState(false);
 
   // Поля ручного конструктора ДЗ
   const [hwType, setHwType] = useState<'test' | 'input' | 'open'>('test');
@@ -161,13 +263,47 @@ export default function HomeworkTab({
   const [aiDrafts, setAiDrafts] = useState<DraftGenTask[]>([]);
   const [savingDrafts, setSavingDrafts] = useState(false);
 
+  const draftAnswersRef = useRef(draftAnswers);
+  const submissionsRef = useRef(submissions);
+  const tasksRef = useRef(tasks);
+  const finishLockRef = useRef(false);
+
+  useEffect(() => {
+    draftAnswersRef.current = draftAnswers;
+  }, [draftAnswers]);
+
+  useEffect(() => {
+    submissionsRef.current = submissions;
+  }, [submissions]);
+
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
+
+  // Перемешиваем задания и варианты тестов индивидуально для ученика на СОР/СОЧ
+  const displayTasks = useMemo(() => {
+    if (!isStudentExam || !profileId) return tasks;
+    const topicSeed = hashString(`${profileId}:${topic.id}`);
+    return seededShuffle(tasks, topicSeed).map((t) =>
+      t.type === 'test' && t.options.length > 1
+        ? {
+            ...t,
+            options: seededShuffle(t.options, hashString(`${profileId}:${t.id}`)),
+          }
+        : t
+    );
+  }, [isStudentExam, profileId, tasks, topic.id]);
+
   useEffect(() => {
     let cancelled = false;
+    finishLockRef.current = false;
 
     async function load() {
       setLoading(true);
       setAiDrafts([]);
       setAiError('');
+      setExamAutoExpired(false);
+
       try {
         const { data: taskRows } = await supabase
           .from('homework_tasks')
@@ -186,11 +322,11 @@ export default function HomeworkTab({
         const mergedDrafts: Record<string, string> = {};
         const signedMap: Record<string, string> = {};
 
-        if (profile && loadedTasks.length > 0) {
+        if (profileId && loadedTasks.length > 0) {
           const { data: subRows } = await supabase
             .from('submissions')
             .select('*')
-            .eq('student_id', profile.id)
+            .eq('student_id', profileId)
             .in(
               'task_id',
               loadedTasks.map((t) => t.id)
@@ -210,7 +346,6 @@ export default function HomeworkTab({
           }
         }
 
-        // Подтягиваем несохранённые локальные черновики поверх серверных ответов
         const cleanedLocal: Record<string, string> = {};
         for (const [taskId, localVal] of Object.entries(savedLocal)) {
           if (!validTaskIds.has(taskId)) continue;
@@ -222,11 +357,39 @@ export default function HomeworkTab({
         }
         writeLocalDrafts(draftStorageKey, cleanedLocal);
 
+        // Определяем статус экзамена СОР / СОЧ (учитывая сдачу на другом устройстве)
+        let resolvedSession: ExamSession | null = null;
+        if (isStudentExam && loadedTasks.length > 0) {
+          const savedSession = readExamSession(examStorageKey);
+          const hasAutoChecked = loadedTasks.some(
+            (t) => t.type !== 'open' && subMap[t.id]?.status === 'checked'
+          );
+          const allHaveSubs = loadedTasks.every((t) => Boolean(subMap[t.id]));
+
+          if (hasAutoChecked || allHaveSubs) {
+            const now = Date.now();
+            resolvedSession = savedSession
+              ? { ...savedSession, finishedAt: savedSession.finishedAt || now }
+              : { startedAt: now, endsAt: now, finishedAt: now };
+            writeExamSession(examStorageKey, resolvedSession);
+          } else if (savedSession) {
+            resolvedSession = savedSession;
+          }
+        }
+
         if (!cancelled) {
           setSubmissions(subMap);
           setDraftAnswers(mergedDrafts);
           setUnsavedDrafts(cleanedLocal);
           setPhotoUrls(signedMap);
+          setExamSession(resolvedSession);
+          if (resolvedSession && !resolvedSession.finishedAt) {
+            setRemainingSec(
+              Math.max(0, Math.ceil((resolvedSession.endsAt - Date.now()) / 1000))
+            );
+          } else {
+            setRemainingSec(null);
+          }
         }
       } catch (err) {
         console.error('Homework load error:', err);
@@ -239,9 +402,131 @@ export default function HomeworkTab({
     return () => {
       cancelled = true;
     };
-  }, [topic.id, profile?.id, draftStorageKey]);
+  }, [topic.id, profileId, draftStorageKey, examStorageKey, isStudentExam]);
+
+  const examStarted = Boolean(examSession);
+  const examFinished = Boolean(examSession?.finishedAt);
+  const examActive = isStudentExam && tasks.length > 0 && examStarted && !examFinished;
+  const examNotStarted = isStudentExam && tasks.length > 0 && !examStarted;
+  const examLocked = isStudentExam && examFinished;
+
+  function handleStartExam() {
+    playSound('click');
+    const now = Date.now();
+    const session: ExamSession = {
+      startedAt: now,
+      endsAt: now + examDurationMin * 60 * 1000,
+    };
+    writeExamSession(examStorageKey, session);
+    setExamSession(session);
+    setRemainingSec(examDurationMin * 60);
+  }
+
+  const finishExam = useCallback(
+    async (autoByTimer: boolean) => {
+      if (!profileId || finishLockRef.current) return;
+
+      const currentTasks = tasksRef.current;
+      const currentDrafts = draftAnswersRef.current;
+      const currentSubs = submissionsRef.current;
+
+      if (!autoByTimer) {
+        const answeredCount = currentTasks.filter((t) => {
+          const text = (currentDrafts[t.id] || '').trim();
+          const hasPhoto = Boolean(currentSubs[t.id]?.photo_path);
+          return text.length > 0 || hasPhoto;
+        }).length;
+
+        const msg =
+          answeredCount < currentTasks.length
+            ? `Ты ответил(а) на ${answeredCount} из ${currentTasks.length} заданий. Завершить и сдать работу сейчас? После сдачи изменить ответы будет нельзя.`
+            : 'Завершить и сдать СОР / СОЧ на проверку? После сдачи изменить ответы будет нельзя.';
+
+        if (!confirm(msg)) return;
+      }
+
+      finishLockRef.current = true;
+      setSubmittingExam(true);
+      if (autoByTimer) setExamAutoExpired(true);
+
+      const nextSubmissions: Record<string, Submission> = { ...currentSubs };
+
+      try {
+        for (const t of currentTasks) {
+          const answerText = (currentDrafts[t.id] || '').trim();
+          const existingSub = nextSubmissions[t.id];
+
+          // Для открытых задач отправляем, только если есть текст (фото уже сохранено при загрузке)
+          if (t.type === 'open') {
+            if (!answerText && !existingSub?.photo_path) continue;
+            if (existingSub && (existingSub.answer_text || '').trim() === answerText) {
+              continue;
+            }
+          }
+
+          const res = await fetch('/api/homework/check', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              taskId: t.id,
+              answerText,
+            }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data.submission) {
+              nextSubmissions[t.id] = data.submission as Submission;
+            }
+          }
+        }
+
+        setSubmissions(nextSubmissions);
+        setUnsavedDrafts({});
+        writeLocalDrafts(draftStorageKey, {});
+
+        const now = Date.now();
+        setExamSession((prev) => {
+          const doneSession: ExamSession = prev
+            ? { ...prev, finishedAt: now }
+            : { startedAt: now, endsAt: now, finishedAt: now };
+          writeExamSession(examStorageKey, doneSession);
+          return doneSession;
+        });
+        setRemainingSec(0);
+
+        playSound('celebrate');
+        onHomeworkSubmitted?.();
+      } catch (err) {
+        console.error('finishExam error:', err);
+        finishLockRef.current = false;
+        alert('Не удалось завершить сдачу из-за ошибки сети. Попробуй нажать «Сдать» ещё раз.');
+      } finally {
+        setSubmittingExam(false);
+      }
+    },
+    [profileId, draftStorageKey, examStorageKey, onHomeworkSubmitted]
+  );
+
+  // Живой отсчёт таймера СОР / СОЧ + автоотправка по истечении времени
+  useEffect(() => {
+    if (!examActive || !examSession) return;
+
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((examSession.endsAt - Date.now()) / 1000));
+      setRemainingSec(left);
+      if (left <= 0) {
+        void finishExam(true);
+      }
+    };
+
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [examActive, examSession, finishExam]);
 
   function handleDraftChange(taskId: string, nextValue: string) {
+    if (examLocked) return;
     setDraftAnswers((prev) => ({ ...prev, [taskId]: nextValue }));
     setUnsavedDrafts((prev) => {
       const serverVal = submissions[taskId]?.answer_text || '';
@@ -271,6 +556,7 @@ export default function HomeworkTab({
       alert('Войди в аккаунт, чтобы решать и отправлять домашние задания.');
       return;
     }
+    if (examLocked) return;
 
     setBusyTaskId(taskId);
     try {
@@ -298,19 +584,21 @@ export default function HomeworkTab({
       setDraftAnswers((prev) => ({ ...prev, [taskId]: sub.answer_text || '' }));
       clearLocalDraft(taskId);
 
-      // Зажигаем звезду ДЗ, когда все задания урока выполнены
-      const allCompleted =
-        tasks.length > 0 &&
-        tasks.every((t) => {
-          const s = nextSubmissions[t.id];
-          if (!s) return false;
-          return t.type === 'open' ? true : Boolean(s.is_correct);
-        });
-      if (allCompleted) {
-        onHomeworkSubmitted?.();
+      // В обычном ДЗ зажигаем звезду, когда все задания урока выполнены
+      if (!isStudentExam) {
+        const allCompleted =
+          tasks.length > 0 &&
+          tasks.every((t) => {
+            const s = nextSubmissions[t.id];
+            if (!s) return false;
+            return t.type === 'open' ? true : Boolean(s.is_correct);
+          });
+        if (allCompleted) {
+          onHomeworkSubmitted?.();
+        }
       }
 
-      if (data.hint) {
+      if (!isStudentExam && data.hint) {
         setHints((prev) => ({ ...prev, [taskId]: data.hint }));
       } else {
         setHints((prev) => {
@@ -329,6 +617,7 @@ export default function HomeworkTab({
       alert('Войди в аккаунт, чтобы прикрепить фото тетради.');
       return;
     }
+    if (examLocked) return;
 
     setBusyTaskId(taskId);
     const preparedFile = await compressImageFile(file);
@@ -517,6 +806,13 @@ export default function HomeworkTab({
     (sum, t) => sum + (submissions[t.id]?.score || 0),
     0
   );
+  const answeredInExamCount = tasks.filter((t) => {
+    const txt = (draftAnswers[t.id] || '').trim();
+    return txt.length > 0 || Boolean(submissions[t.id]?.photo_path);
+  }).length;
+
+  const isLowTime = remainingSec !== null && remainingSec <= 120;
+  const isWarnTime = remainingSec !== null && remainingSec <= 300 && !isLowTime;
 
   if (loading) {
     return (
@@ -528,25 +824,154 @@ export default function HomeworkTab({
 
   return (
     <div className="space-y-5">
-      {/* Шапка ДЗ */}
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 className="text-base sm:text-lg font-bold text-slate-900">
-            Домашние задания к уроку
-          </h3>
-          <p className="text-xs text-slate-500">
-            Тесты и краткие ответы проверяются мгновенно; черновики сохраняются автоматически.
-          </p>
-        </div>
-        {tasks.length > 0 && (
-          <div className="px-4 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-bold tabular-nums">
-            Набрано: {earnedPoints} / {maxPoints} б.
+      {/* Инфо-баннер для учителя на темах СОР/СОЧ */}
+      {topic.is_assessment && isTeacher && (
+        <div className="rounded-3xl bg-amber-50 border-2 border-amber-300 px-5 py-3.5 text-xs sm:text-sm font-semibold text-amber-950 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            🛡️ <strong>Защита СОР / СОЧ активна для учеников:</strong> индивидуальное
+            перемешивание заданий и вариантов, таймер <strong>{examDurationMin} мин</strong>,
+            единая сдача без подбора и отключённый Сократ.
           </div>
-        )}
-      </div>
+          <span className="px-2.5 py-1 rounded-xl bg-white border border-amber-200 text-xs font-extrabold text-amber-800">
+            Просмотр учителя
+          </span>
+        </div>
+      )}
 
-      {/* Список заданий */}
-      {tasks.length === 0 ? (
+      {/* Липкая панель таймера и сдачи во время активного СОР / СОЧ */}
+      {examActive && (
+        <div
+          className={`sticky top-[72px] z-20 rounded-2xl border-2 px-4 py-3 shadow-md flex flex-wrap items-center justify-between gap-3 backdrop-blur-md ${
+            isLowTime
+              ? 'bg-rose-50/95 border-rose-400 text-rose-900'
+              : isWarnTime
+                ? 'bg-amber-50/95 border-amber-400 text-amber-950'
+                : 'bg-white/95 border-indigo-300 text-slate-900'
+          }`}
+        >
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="px-2.5 py-1 rounded-xl bg-amber-100 text-amber-900 text-xs font-extrabold">
+              🛡️ СОР / СОЧ · {examVariant}
+            </span>
+            <span
+              className={`px-3 py-1 rounded-xl font-mono text-sm sm:text-base font-extrabold tabular-nums ${
+                isLowTime
+                  ? 'bg-rose-600 text-white animate-pulse'
+                  : isWarnTime
+                    ? 'bg-amber-500 text-white'
+                    : 'bg-indigo-600 text-white'
+              }`}
+            >
+              ⏱️ {formatCountdown(remainingSec ?? 0)}
+            </span>
+            <span className="text-xs font-bold opacity-80 tabular-nums">
+              Отвечено: {answeredInExamCount} / {tasks.length}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            disabled={submittingExam}
+            onClick={() => void finishExam(false)}
+            className="btn-tactile px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 disabled:opacity-60 text-white text-xs sm:text-sm font-extrabold"
+          >
+            {submittingExam ? 'Отправляем...' : '📤 Сдать работу'}
+          </button>
+        </div>
+      )}
+
+      {/* Итоговый баннер после завершения СОР / СОЧ */}
+      {examLocked && (
+        <div className="rounded-3xl bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-300 p-5 flex flex-wrap items-center justify-between gap-3 animate-pop">
+          <div className="space-y-1">
+            <div className="text-sm sm:text-base font-extrabold text-emerald-950">
+              {examAutoExpired
+                ? '⏰ Время вышло — ответы автоматически сохранены!'
+                : '🏁 Работа СОР / СОЧ успешно сдана!'}
+            </div>
+            <p className="text-xs text-emerald-800">
+              {examVariant} · Изменение ответов закрыто. Если есть открытые задачи,
+              учитель проверит их и выставит дополнительные баллы.
+            </p>
+          </div>
+          <div className="px-4 py-2 rounded-2xl bg-white border border-emerald-300 text-emerald-800 text-sm font-extrabold tabular-nums">
+            Итог: {earnedPoints} / {maxPoints} б.
+          </div>
+        </div>
+      )}
+
+      {/* Обычная шапка ДЗ (не показываем во время активного экзамена) */}
+      {!examActive && !examNotStarted && (
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-5 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-base sm:text-lg font-bold text-slate-900">
+              {topic.is_assessment ? 'Задания СОР / СОЧ' : 'Домашние задания к уроку'}
+            </h3>
+            <p className="text-xs text-slate-500">
+              Тесты и краткие ответы проверяются мгновенно; черновики сохраняются автоматически.
+            </p>
+          </div>
+          {tasks.length > 0 && (
+            <div className="px-4 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs sm:text-sm font-bold tabular-nums">
+              Набрано: {earnedPoints} / {maxPoints} б.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Экран старта СОР / СОЧ для ученика */}
+      {examNotStarted ? (
+        <div className="bg-white rounded-3xl border-2 border-amber-300 shadow-sm p-6 sm:p-8 text-center max-w-2xl mx-auto space-y-5 animate-pop">
+          <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-3xl">
+            🛡️
+          </div>
+          <div className="space-y-1.5">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-extrabold">
+              <span>🏆 СОР / СОЧ</span>
+              <span>·</span>
+              <span>{examVariant}</span>
+            </div>
+            <h3 className="text-xl sm:text-2xl font-extrabold text-slate-900">
+              Готов(а) начать проверочную работу?
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-600 max-w-lg mx-auto leading-relaxed">
+              После нажатия кнопки запустится таймер. Ответы сохраняются автоматически,
+              а итоговый результат появится сразу после сдачи работы.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2.5 max-w-md mx-auto">
+            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+              <div className="text-lg font-extrabold text-indigo-600 tabular-nums">
+                {tasks.length}
+              </div>
+              <div className="text-[11px] font-bold text-slate-500">заданий</div>
+            </div>
+            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+              <div className="text-lg font-extrabold text-amber-600 tabular-nums">
+                {examDurationMin} мин
+              </div>
+              <div className="text-[11px] font-bold text-slate-500">на работу</div>
+            </div>
+            <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200">
+              <div className="text-lg font-extrabold text-emerald-600 tabular-nums">
+                {maxPoints} б.
+              </div>
+              <div className="text-[11px] font-bold text-slate-500">максимум</div>
+            </div>
+          </div>
+
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={handleStartExam}
+              className="btn-tactile px-7 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-sm sm:text-base font-extrabold shadow-xs"
+            >
+              🚀 Начать СОР / СОЧ
+            </button>
+          </div>
+        </div>
+      ) : tasks.length === 0 ? (
         <div className="bg-white rounded-3xl border border-dashed border-slate-300 p-8 text-center space-y-2">
           <div className="text-3xl">📝</div>
           <p className="text-sm font-bold text-slate-700">
@@ -560,10 +985,10 @@ export default function HomeworkTab({
         </div>
       ) : (
         <div className="space-y-4">
-          {tasks.map((hw, idx) => {
+          {displayTasks.map((hw, idx) => {
             const sub = submissions[hw.id];
             const diff = DIFF_META[hw.difficulty] || DIFF_META.standard;
-            const busy = busyTaskId === hw.id;
+            const busy = busyTaskId === hw.id || submittingExam;
             const hasLocalDraft = hw.id in unsavedDrafts;
             const typeLabel =
               hw.type === 'test'
@@ -582,13 +1007,20 @@ export default function HomeworkTab({
                     <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-800 text-xs font-bold">
                       Задание №{idx + 1}
                     </span>
-                    <span className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${diff.cls}`}>
+                    <span
+                      className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${diff.cls}`}
+                    >
                       {diff.label}
                     </span>
                     <span className="text-[11px] font-semibold text-slate-500">
                       {typeLabel} · {hw.points} б.
                     </span>
-                    {hasLocalDraft && (
+                    {examActive && (draftAnswers[hw.id] || '').trim() && (
+                      <span className="px-2 py-0.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">
+                        ✓ Ответ записан
+                      </span>
+                    )}
+                    {!examActive && hasLocalDraft && (
                       <span
                         className="px-2 py-0.5 rounded-lg bg-sky-50 border border-sky-200 text-sky-700 text-[10px] font-bold"
                         title="Введённый текст сохранён в браузере и не пропадёт при обновлении страницы"
@@ -615,28 +1047,42 @@ export default function HomeworkTab({
                   <div className="space-y-2.5">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       {hw.options.map((opt) => {
-                        const chosen = sub?.answer_text === opt;
+                        const chosenInExam = examActive && draftAnswers[hw.id] === opt;
+                        const chosenSubmitted = !examActive && sub?.answer_text === opt;
+
                         let cls =
                           'border-slate-200 bg-slate-50 hover:border-indigo-300 text-slate-700';
-                        if (chosen && sub?.status === 'checked') {
+                        if (chosenInExam) {
+                          cls =
+                            'border-indigo-500 bg-indigo-50 text-indigo-900 ring-2 ring-indigo-200';
+                        } else if (chosenSubmitted && sub?.status === 'checked') {
                           cls = sub.is_correct
                             ? 'border-emerald-500 bg-emerald-50 text-emerald-900'
                             : 'border-rose-500 bg-rose-50 text-rose-900';
                         }
+
                         return (
                           <button
                             key={opt}
                             type="button"
-                            disabled={busy}
-                            onClick={() => submitAnswer(hw.id, opt)}
-                            className={`text-left px-4 py-3 rounded-2xl border-2 text-xs sm:text-sm font-semibold transition ${cls}`}
+                            disabled={busy || examLocked}
+                            onClick={() => {
+                              if (examActive) {
+                                playSound('click');
+                                handleDraftChange(hw.id, opt);
+                              } else {
+                                void submitAnswer(hw.id, opt);
+                              }
+                            }}
+                            className={`text-left px-4 py-3 rounded-2xl border-2 text-xs sm:text-sm font-semibold transition disabled:cursor-default ${cls}`}
                           >
                             <MathMarkdown content={opt} inline />
                           </button>
                         );
                       })}
                     </div>
-                    {sub?.status === 'checked' && (
+
+                    {!examActive && sub?.status === 'checked' && (
                       <div
                         className={`text-xs font-bold ${
                           sub.is_correct ? 'text-emerald-600' : 'text-rose-600'
@@ -644,7 +1090,9 @@ export default function HomeworkTab({
                       >
                         {sub.is_correct
                           ? `✓ Верно! Начислено ${sub.score} б.`
-                          : '✗ Неверно. Попробуй другой вариант!'}
+                          : examLocked
+                            ? '✗ Ответ неверный (0 б.).'
+                            : '✗ Неверно. Попробуй другой вариант!'}
                       </div>
                     )}
                   </div>
@@ -656,11 +1104,13 @@ export default function HomeworkTab({
                     <HomeworkShortInput
                       value={draftAnswers[hw.id] ?? ''}
                       busy={busy}
+                      examMode={examActive || examLocked}
+                      disabled={examLocked}
                       onChange={(next) => handleDraftChange(hw.id, next)}
                       onSubmit={() => submitAnswer(hw.id, draftAnswers[hw.id] || '')}
                     />
 
-                    {sub?.status === 'checked' && (
+                    {!examActive && sub?.status === 'checked' && (
                       <div
                         className={`text-xs font-bold ${
                           sub.is_correct ? 'text-emerald-600' : 'text-rose-600'
@@ -668,13 +1118,15 @@ export default function HomeworkTab({
                       >
                         {sub.is_correct
                           ? `✓ Верно! Начислено ${sub.score} б.`
-                          : '✗ Ответ не совпадает. Перепроверь вычисления и попробуй ещё раз.'}
+                          : examLocked
+                            ? '✗ Ответ неверный (0 б.).'
+                            : '✗ Ответ не совпадает. Перепроверь вычисления и попробуй ещё раз.'}
                       </div>
                     )}
                   </div>
                 )}
 
-                {hints[hw.id] && (
+                {!isStudentExam && hints[hw.id] && (
                   <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900">
                     💡 <strong>Подсказка:</strong> {hints[hw.id]}
                   </div>
@@ -685,37 +1137,42 @@ export default function HomeworkTab({
                   <div className="space-y-3">
                     <textarea
                       rows={3}
+                      disabled={examLocked}
                       value={draftAnswers[hw.id] ?? ''}
                       onChange={(e) => handleDraftChange(hw.id, e.target.value)}
                       placeholder="Напиши ход решения здесь (или прикрепи фото тетради)..."
-                      className="w-full p-3.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500"
+                      className="w-full p-3.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500 disabled:opacity-60"
                     />
 
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <label className="cursor-pointer inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition">
-                        📷 {busy ? 'Сжимаем и загружаем...' : 'Прикрепить фото тетради'}
-                        <input
-                          type="file"
-                          accept="image/*"
-                          disabled={busy}
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) handlePhotoUpload(hw.id, f);
-                            e.target.value = '';
-                          }}
-                          className="hidden"
-                        />
-                      </label>
+                    {!examLocked && (
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <label className="cursor-pointer inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition">
+                          📷 {busy ? 'Сжимаем и загружаем...' : 'Прикрепить фото тетради'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            disabled={busy}
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) void handlePhotoUpload(hw.id, f);
+                              e.target.value = '';
+                            }}
+                            className="hidden"
+                          />
+                        </label>
 
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => submitAnswer(hw.id, draftAnswers[hw.id] || '')}
-                        className="btn-tactile px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
-                      >
-                        {sub ? 'Обновить решение' : 'Отправить учителю'}
-                      </button>
-                    </div>
+                        {!examActive && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => submitAnswer(hw.id, draftAnswers[hw.id] || '')}
+                            className="btn-tactile px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
+                          >
+                            {sub ? 'Обновить решение' : 'Отправить учителю'}
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                     {photoUrls[hw.id] && (
                       <div className="pt-1">
@@ -755,6 +1212,23 @@ export default function HomeworkTab({
               </div>
             );
           })}
+
+          {/* Нижняя кнопка сдачи в конце СОР / СОЧ */}
+          {examActive && (
+            <div className="rounded-3xl bg-white border-2 border-emerald-300 p-5 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-xs sm:text-sm font-bold text-slate-700">
+                Проверил(а) все ответы? Отвечено {answeredInExamCount} из {tasks.length}.
+              </div>
+              <button
+                type="button"
+                disabled={submittingExam}
+                onClick={() => void finishExam(false)}
+                className="btn-tactile px-6 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 border-emerald-800 disabled:opacity-60 text-white text-sm font-extrabold"
+              >
+                {submittingExam ? 'Отправляем...' : '📤 Завершить и сдать СОР / СОЧ'}
+              </button>
+            </div>
+          )}
         </div>
       )}
 
