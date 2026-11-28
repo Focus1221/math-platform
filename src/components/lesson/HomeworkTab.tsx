@@ -3,11 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import MathMarkdown from './MathMarkdown';
-import MathKeypad, { type KeypadKey } from '@/components/ui/MathKeypad';
 import { playSound } from '@/lib/audio/sound';
 import { compressImageFile } from '@/lib/media/compressImage';
 import type { HomeworkTask, Profile, Submission, Topic } from '@/types/db';
-
+import MathInput from '@/components/ui/MathInput';
 interface Props {
   topic: Topic;
   canEdit: boolean;
@@ -36,14 +35,6 @@ const DIFF_META: Record<HomeworkTask['difficulty'], { label: string; cls: string
   standard: { label: 'Стандарт', cls: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
   pro: { label: 'Профи', cls: 'bg-purple-50 text-purple-700 border-purple-200' },
 };
-
-const HOMEWORK_KEYS: KeypadKey[] = [
-  { label: ',', value: ',', title: 'Десятичная запятая' },
-  { label: '/', value: '/', title: 'Черта дроби (например 3/4)' },
-  { label: '−', value: '-', title: 'Минус' },
-  { label: '%', value: '%', title: 'Проценты' },
-  { label: '°', value: '°', title: 'Градусы' },
-];
 
 // Детерминированное перемешивание (одинаковое при F5, разное у каждого ученика)
 function hashString(str: string): number {
@@ -162,49 +153,34 @@ function HomeworkShortInput({
   onChange: (next: string) => void;
   onSubmit: () => void;
 }) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
   return (
-    <div className="space-y-2.5">
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!examMode && !disabled) onSubmit();
-        }}
-        className="flex flex-col sm:flex-row gap-2 max-w-md"
-      >
-        <input
-          ref={inputRef}
-          type="text"
-          autoComplete="off"
-          disabled={disabled || busy}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="Введи ответ (напр. 42 или 3/4)..."
-          className="flex-1 px-4 py-2.5 text-sm font-semibold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-indigo-500 disabled:opacity-60"
-        />
-        {!examMode && (
-          <button
-            type="submit"
-            disabled={busy || disabled}
-            className="btn-tactile px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
-          >
-            {busy ? 'Проверка...' : 'Проверить'}
-          </button>
-        )}
-      </form>
-
-      {!disabled && (
-        <MathKeypad
-          value={value}
-          onChange={onChange}
-          inputRef={inputRef}
-          symbols={HOMEWORK_KEYS}
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!examMode && !disabled) onSubmit();
+      }}
+      className="flex flex-col sm:flex-row gap-2 max-w-md"
+    >
+      <MathInput
+        value={value}
+        disabled={disabled || busy}
+        examMode={examMode}
+        submitLabel="✓ Проверить"
+        onChange={onChange}
+        onSubmit={onSubmit}
+        placeholder="Введи ответ (напр. 42 или 3/4)..."
+        className="px-4 py-2.5 text-sm font-semibold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-indigo-500 disabled:opacity-60"
+      />
+      {!examMode && (
+        <button
+          type="submit"
           disabled={busy || disabled}
-          align="left"
-        />
+          className="btn-tactile px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition shrink-0"
+        >
+          {busy ? 'Проверка...' : 'Проверить'}
+        </button>
       )}
-    </div>
+    </form>
   );
 }
 

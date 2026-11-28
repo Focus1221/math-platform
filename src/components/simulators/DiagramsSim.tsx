@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import MathKeypad, { type KeypadKey } from '@/components/ui/MathKeypad';
+import MathInput from '@/components/ui/MathInput';
 import { randInt } from '@/lib/math/utils';
 
 interface Props {
@@ -35,12 +35,6 @@ type DiagramTask =
     };
 
 const PALETTE = ['#4F46E5', '#10B981', '#F59E0B', '#EC4899', '#0EA5E9'];
-
-const DIAGRAM_KEYS: KeypadKey[] = [
-  { label: ',', value: ',', title: 'Десятичная запятая' },
-  { label: '°', value: '°', title: 'Градусы' },
-  { label: '%', value: '%', title: 'Проценты' },
-];
 
 const INITIAL_DIAGRAM_TASK: DiagramTask = {
   kind: 'angle_from_percent',
@@ -260,7 +254,6 @@ export default function DiagramsSim({ onResult }: Props) {
   const [input, setInput] = useState('');
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function clearPendingTimer() {
@@ -308,8 +301,7 @@ export default function DiagramsSim({ onResult }: Props) {
     setFeedback(null);
   }
 
-  function handleCheck(e: React.FormEvent) {
-    e.preventDefault();
+  function checkCurrentAnswer() {
     clearPendingTimer();
     const cleaned = input.trim().replace(/[°%\s]/g, '').replace(',', '.');
     const val = Number(cleaned);
@@ -337,6 +329,11 @@ export default function DiagramsSim({ onResult }: Props) {
       }
       setFeedback({ ok: false, text: `✗ Неверно. ${hint}` });
     }
+  }
+
+  function handleCheck(e: React.FormEvent) {
+    e.preventDefault();
+    checkCurrentAnswer();
   }
 
   return (
@@ -644,32 +641,22 @@ export default function DiagramsSim({ onResult }: Props) {
               )}
 
               <form onSubmit={handleCheck} className="flex gap-2">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  autoComplete="off"
+                <MathInput
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
+                  onChange={setInput}
+                  onSubmit={checkCurrentAnswer}
                   placeholder={
                     task.kind === 'angle_from_percent' ? 'Например: 90' : 'Например: 25'
                   }
-                  className="flex-1 px-4 py-2.5 text-center text-base font-bold bg-slate-50 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
+                  className="px-4 py-2.5 text-center text-base font-bold bg-slate-50 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
                 />
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition"
+                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition shrink-0"
                 >
                   Проверить
                 </button>
               </form>
-
-              <MathKeypad
-                value={input}
-                onChange={setInput}
-                inputRef={inputRef}
-                symbols={DIAGRAM_KEYS}
-                align="left"
-              />
 
               {feedback && (
                 <div

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import MathInput from '@/components/ui/MathInput';
 import { gcd, randInt } from '@/lib/math/utils';
 
 interface Props {
@@ -47,6 +48,12 @@ const FRACTION_TASKS: { n: number; d: number; pct: number }[] = [
 
 const DECIMAL_POOL = [5, 8, 10, 12, 15, 20, 24, 25, 30, 35, 40, 45, 50, 60, 65, 75, 80, 90];
 
+const INITIAL_GRID_TASK: GridTask = {
+  kind: 'paint_decimal',
+  target: 25,
+  label: '0,25',
+};
+
 function formatDecimal(p: number): string {
   if (p === 0) return '0';
   if (p === 100) return '1';
@@ -86,7 +93,7 @@ export default function PercentGridSim({ onResult }: Props) {
   const [cells, setCells] = useState<boolean[]>(() => makeCells(25));
   const [dragValue, setDragValue] = useState<boolean | null>(null);
 
-  const [task, setTask] = useState<GridTask>(() => makeTask());
+  const [task, setTask] = useState<GridTask>(INITIAL_GRID_TASK);
   const [answerInput, setAnswerInput] = useState('');
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -187,10 +194,14 @@ export default function PercentGridSim({ onResult }: Props) {
     }
   }
 
-  function handleCheckRead(e: React.FormEvent) {
-    e.preventDefault();
+  function checkReadAnswer() {
     clearPendingTimer();
-    const cleaned = answerInput.trim().replace(/\s+/g, '').replace('%', '').replace(',', '.');
+    const cleaned = answerInput
+      .trim()
+      .replace(/\s+/g, '')
+      .replace(/−/g, '-')
+      .replace('%', '')
+      .replace(',', '.');
     const num = Number(cleaned);
     if (!cleaned || Number.isNaN(num)) return;
 
@@ -215,6 +226,11 @@ export default function PercentGridSim({ onResult }: Props) {
             : '✗ Неверно. Чтобы перевести проценты в десятичную дробь, раздели число клеток на 100 (сдвинь запятую на 2 знака влево).',
       });
     }
+  }
+
+  function handleCheckRead(e: React.FormEvent) {
+    e.preventDefault();
+    checkReadAnswer();
   }
 
   return (
@@ -406,17 +422,16 @@ export default function PercentGridSim({ onResult }: Props) {
                     : 'Введи десятичную дробь (например: 0,35):'}
                 </label>
                 <div className="flex gap-2">
-                  <input
-                    type="text"
-                    autoComplete="off"
+                  <MathInput
                     value={answerInput}
-                    onChange={(e) => setAnswerInput(e.target.value)}
+                    onChange={setAnswerInput}
+                    onSubmit={checkReadAnswer}
                     placeholder={task.kind === 'read_percent' ? '35%' : '0,35'}
-                    className="flex-1 px-4 py-2.5 text-center text-base font-bold bg-slate-50 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
+                    className="px-4 py-2.5 text-center text-base font-bold bg-slate-50 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
                   />
                   <button
                     type="submit"
-                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition"
+                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold transition shrink-0"
                   >
                     Проверить
                   </button>

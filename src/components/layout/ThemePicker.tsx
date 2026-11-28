@@ -67,7 +67,7 @@ export default function ThemePicker({ compact = false }: Props) {
       </button>
 
       {open && (
-        <div className="theme-popover absolute right-0 mt-2 w-72 bg-white rounded-2xl border border-slate-200 shadow-2xl p-2 space-y-1.5 z-50 animate-pop">
+        <div className="theme-popover fixed left-3 right-3 top-[68px] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-72 bg-white rounded-2xl border border-slate-200 shadow-2xl p-2 space-y-1.5 z-50 animate-pop">
           <div className="px-2 pt-1 pb-1 text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
             Выбери атмосферу MathHub
           </div>

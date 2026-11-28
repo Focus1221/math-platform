@@ -10,7 +10,7 @@ import 'katex/dist/katex.min.css';
 import './globals.css';
 import ThemeBackdrop from '@/components/layout/ThemeBackdrop';
 import PwaRegister from '@/components/layout/PwaRegister';
-
+import MathKeyboardDock from '@/components/ui/MathKeyboardDock';
 const manrope = Manrope({
   subsets: ['latin', 'cyrillic'],
   weight: ['400', '500', '600', '700', '800'],
@@ -95,6 +95,7 @@ export default function RootLayout({
       <body className="antialiased min-h-screen overflow-x-clip">
         <ThemeBackdrop />
         <div className="relative z-10 min-h-screen">{children}</div>
+        <MathKeyboardDock />
         <PwaRegister />
       </body>
     </html>

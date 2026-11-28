@@ -885,6 +885,42 @@ html[data-theme="cosmos"] .theme-scene--cosmos {
     background-color: #111830;
     color: #F1F5F9;
   }
+/* Непрозрачное меню тем во всех мирах (текст под меню не просвечивает) */
+  html:not([data-theme]) .theme-popover,
+  [data-theme="ocean"] .theme-popover,
+  [data-theme="comic"] .theme-popover {
+    background-color: #FFFFFF !important;
+  }
+  [data-theme="sunset"] .theme-popover {
+    background-color: #FFFBF6 !important;
+  }
+  [data-theme="chalk"] .theme-popover {
+    background-color: #13352B !important;
+  }
+  [data-theme="cosmos"] .theme-popover {
+    background-color: #0F172A !important;
+  }
+
+  /* Оформление собственной математической клавиатуры под все 5 миров */
+  [data-theme="sunset"] .math-kb-shell {
+    background-color: rgba(255, 251, 246, 0.98) !important;
+    border-color: rgba(234, 88, 12, 0.35) !important;
+  }
+  [data-theme="comic"] .math-kb-shell {
+    background-color: #FFFFFF !important;
+    border: 3px solid #0F172A !important;
+    box-shadow: 0 -4px 0 #0F172A !important;
+  }
+  [data-theme="chalk"] .math-kb-shell {
+    background-color: #0F2E25 !important;
+    border-color: rgba(253, 224, 71, 0.45) !important;
+  }
+  [data-theme="cosmos"] .math-kb-shell {
+    background-color: #0D142B !important;
+    border-color: rgba(129, 140, 248, 0.45) !important;
+  }
+
+
 }
 
 /* Уважаем системную настройку отключения анимаций */

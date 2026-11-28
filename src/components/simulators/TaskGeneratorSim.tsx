@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import MathKeypad, { type KeypadKey } from '@/components/ui/MathKeypad';
+import MathInput from '@/components/ui/MathInput';
 import { gcd, lcm, randInt } from '@/lib/math/utils';
 
 type GenCategory =
@@ -32,12 +32,6 @@ const CAT_LABELS: Record<GenCategory, string> = {
   decimals: 'Десятичные дроби',
   percents: 'Проценты',
 };
-
-const GENERATOR_KEYS: KeypadKey[] = [
-  { label: ',', value: ',', title: 'Десятичная запятая' },
-  { label: '/', value: '/', title: 'Черта дроби (например 3/4)' },
-  { label: '−', value: '-', title: 'Минус' },
-];
 
 const INITIAL_TASKS: Record<GenCategory, GenTask> = {
   natural: {
@@ -240,7 +234,6 @@ export default function TaskGeneratorSim({ initialSimType, onResult }: Props) {
   const [showHint, setShowHint] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const inputRef = useRef<HTMLInputElement | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const difficultyRef = useRef(difficulty);
   const prevSimTypeRef = useRef(initialSimType);
@@ -280,8 +273,7 @@ export default function TaskGeneratorSim({ initialSimType, onResult }: Props) {
     setFeedback(null);
   }
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  function submitCurrentAnswer() {
     clearPendingTimer();
     const norm = (s: string) =>
       s
@@ -302,8 +294,16 @@ export default function TaskGeneratorSim({ initialSimType, onResult }: Props) {
       timerRef.current = setTimeout(() => nextTask(), 1100);
     } else {
       setShowHint(true);
-      setFeedback({ ok: false, text: '✗ Пока неверно. Посмотри подсказку ниже и попробуй ещё раз!' });
+      setFeedback({
+        ok: false,
+        text: '✗ Пока неверно. Посмотри подсказку ниже и попробуй ещё раз!',
+      });
     }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    submitCurrentAnswer();
   }
 
   return (
@@ -359,29 +359,20 @@ export default function TaskGeneratorSim({ initialSimType, onResult }: Props) {
         </p>
 
         <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-2 max-w-md mx-auto">
-          <input
-            ref={inputRef}
-            type="text"
-            autoComplete="off"
+          <MathInput
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={setInput}
+            onSubmit={submitCurrentAnswer}
             placeholder={task.placeholder || 'Введи ответ...'}
-            className="flex-1 px-4 py-2.5 text-center text-base font-bold bg-slate-50 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
+            className="px-4 py-2.5 text-center text-base font-bold bg-slate-50 border-2 border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
           />
           <button
             type="submit"
-            className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-xs transition"
+            className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold shadow-xs transition shrink-0"
           >
             Проверить
           </button>
         </form>
-
-        <MathKeypad
-          value={input}
-          onChange={setInput}
-          inputRef={inputRef}
-          symbols={GENERATOR_KEYS}
-        />
 
         {feedback && (
           <div
