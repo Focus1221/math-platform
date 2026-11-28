@@ -14,6 +14,7 @@ import AiTutorTab from './AiTutorTab';
 import TopicEditorModal from './TopicEditorModal';
 import ScheduleTopicModal from './ScheduleTopicModal';
 import BoardDrawOverlay from './BoardDrawOverlay';
+import type { BoardViewMode } from './board/boardTypes';
 import ConfettiBurst from '@/components/ui/ConfettiBurst';
 import { cleanSectionName, getScheduleBadge } from '@/lib/format/cleanTopic';
 import { isSoundEnabled, playSound, setSoundEnabled } from '@/lib/audio/sound';
@@ -80,6 +81,7 @@ export default function CourseWorkspace({
   const [teacherMode, setTeacherMode] = useState(false);
   const [teacherMenuOpen, setTeacherMenuOpen] = useState(false);
   const [boardMode, setBoardMode] = useState(false);
+  const [boardLayout, setBoardLayout] = useState<BoardViewMode>('glass');
   const [tutorOpen, setTutorOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
@@ -289,6 +291,8 @@ export default function CourseWorkspace({
         setDrawerOpen(false);
         setTutorOpen(false);
         setTeacherMenuOpen(false);
+      } else {
+        setBoardLayout('glass');
       }
       return next;
     });
@@ -954,7 +958,11 @@ export default function CourseWorkspace({
       )}
 
       {/* Просторная центральная зона урока */}
-      <main className="flex-1 w-full px-3 sm:px-6 pt-4 pb-28">
+      <main
+        className={`flex-1 w-full px-3 sm:px-6 pt-4 pb-28 transition-all ${
+          boardMode && boardLayout === 'split' ? 'md:pr-[51vw]' : ''
+        }`}
+      >
         {!activeTopic ? (
           <div className="max-w-3xl mx-auto bg-white rounded-3xl border border-slate-200 p-10 text-center space-y-3">
             <div className="text-4xl">📚</div>
@@ -1333,7 +1341,18 @@ export default function CourseWorkspace({
       )}
 
       {boardMode && (
-        <BoardDrawOverlay onExitBoard={() => setBoardMode(false)} />
+        <BoardDrawOverlay
+          onExitBoard={() => {
+            setBoardMode(false);
+            setBoardLayout('glass');
+          }}
+          topic={activeTopic}
+          isTeacher={isTeacher}
+          onMaterialSaved={(created) =>
+            setMaterials((prev) => [...prev, created])
+          }
+          onLayoutChange={setBoardLayout}
+        />
       )}
 
       {scheduleModalOpen && activeTopic && (
