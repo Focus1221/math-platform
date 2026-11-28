@@ -9,7 +9,7 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-project-export/src/components/lesson/board/BoardGeoTools.tsx
+project-export/
 
 # testing
 /coverage
