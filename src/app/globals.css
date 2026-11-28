@@ -1,49 +1,84 @@
 @import "tailwindcss";
 
+/* =========================================================
+   БАЗОВЫЕ ПЕРЕМЕННЫЕ 5 МИРОВ
+   ========================================================= */
 :root,
-[data-theme="bright"] {
-  --surface-bg: #F5F7FF;
-  --surface-mesh:
-    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.12) 0px, transparent 48%),
-    radial-gradient(at 100% 0%, rgba(245, 158, 11, 0.11) 0px, transparent 44%),
-    radial-gradient(at 50% 100%, rgba(16, 185, 129, 0.08) 0px, transparent 50%);
+html[data-theme="ocean"] {
+  --surface-bg: #93C5FD;
   --surface-card: #FFFFFF;
   --ink-main: #0F172A;
+  --font-body: var(--font-nunito), system-ui, sans-serif;
+  --font-heading: var(--font-nunito), system-ui, sans-serif;
 }
 
-[data-theme="mint"] {
-  --surface-bg: #F2FBF7;
-  --surface-mesh:
-    radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.15) 0px, transparent 48%),
-    radial-gradient(at 100% 10%, rgba(14, 165, 233, 0.12) 0px, transparent 45%),
-    radial-gradient(at 50% 100%, rgba(99, 102, 241, 0.07) 0px, transparent 50%);
+html[data-theme="chalk"] {
+  --surface-bg: #0C251E;
+  --surface-card: #14362C;
+  --ink-main: #F8FAFC;
+  --font-body: var(--font-manrope), system-ui, sans-serif;
+  --font-heading: var(--font-manrope), system-ui, sans-serif;
+}
+
+html[data-theme="sunset"] {
+  --surface-bg: #FBC2B5;
+  --surface-card: #FFFBF6;
+  --ink-main: #2A1710;
+  --font-body: var(--font-golos), system-ui, sans-serif;
+  --font-heading: var(--font-golos), system-ui, sans-serif;
+}
+
+html[data-theme="comic"] {
+  --surface-bg: #FDE047;
   --surface-card: #FFFFFF;
   --ink-main: #0F172A;
+  --font-body: var(--font-manrope), system-ui, sans-serif;
+  --font-heading: var(--font-unbounded), var(--font-manrope), system-ui, sans-serif;
 }
 
-[data-theme="cosmos"] {
-  --surface-bg: #0B1020;
-  --surface-mesh:
-    radial-gradient(at 10% 0%, rgba(99, 102, 241, 0.22) 0px, transparent 48%),
-    radial-gradient(at 90% 10%, rgba(139, 92, 246, 0.18) 0px, transparent 44%),
-    radial-gradient(at 50% 100%, rgba(16, 185, 129, 0.12) 0px, transparent 50%);
-  --surface-card: #131B31;
+html[data-theme="cosmos"] {
+  --surface-bg: #050816;
+  --surface-card: #111830;
   --ink-main: #F1F5F9;
+  --font-body: var(--font-manrope), system-ui, sans-serif;
+  --font-heading: var(--font-manrope), system-ui, sans-serif;
 }
 
 html {
   scroll-behavior: smooth;
+  background-color: var(--surface-bg);
 }
 
 body {
-  background-color: var(--surface-bg);
-  background-image: var(--surface-mesh);
-  background-attachment: fixed;
+  background-color: transparent;
   color: var(--ink-main);
-  transition: background-color 0.25s ease, color 0.2s ease;
+  font-family: var(--font-body);
+  transition: color 0.2s ease;
 }
 
-/* Живые объёмные кнопки */
+h1, h2, h3 {
+  font-family: var(--font-heading);
+}
+
+.font-mono,
+code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+/* Показ нужной векторной сцены по data-theme */
+.theme-scene {
+  display: none;
+}
+html:not([data-theme]) .theme-scene--ocean,
+html[data-theme="ocean"] .theme-scene--ocean,
+html[data-theme="chalk"] .theme-scene--chalk,
+html[data-theme="sunset"] .theme-scene--sunset,
+html[data-theme="comic"] .theme-scene--comic,
+html[data-theme="cosmos"] .theme-scene--cosmos {
+  display: block;
+}
+
+/* Тактильность */
 .btn-tactile {
   border-bottom-width: 3px;
   transition: transform 0.12s ease, background-color 0.15s ease, box-shadow 0.15s ease;
@@ -53,7 +88,6 @@ body {
   transform: translateY(2px);
 }
 
-/* Плавный «воздушный» подъём интерактивных карточек */
 .card-lift {
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
@@ -62,6 +96,9 @@ body {
   transform: translateY(-2px);
 }
 
+/* =========================================================
+   АНИМАЦИИ ДВИЖЕНИЯ И ПЕРЕЛИВАНИЯ ЦВЕТА
+   ========================================================= */
 @keyframes shake-soft {
   0%, 100% { transform: translateX(0); }
   20% { transform: translateX(-5px); }
@@ -75,132 +112,799 @@ body {
 }
 
 @keyframes pop-in {
-  0% { transform: scale(0.95); opacity: 0; }
+  0% { transform: scale(0.96); opacity: 0; }
   100% { transform: scale(1); opacity: 1; }
 }
 
 .animate-pop {
-  animation: pop-in 0.22s ease-out;
+  animation: pop-in 0.2s ease-out;
 }
 
 @keyframes float-slow {
   0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-4px); }
+  50% { transform: translateY(-10px); }
 }
 
 .animate-float {
-  animation: float-slow 3.5s ease-in-out infinite;
+  animation: float-slow 5.5s ease-in-out infinite;
 }
 
-/* Сквозная адаптация тёмной темы «Космос» (только на экране, не ломает печать A4) */
+@keyframes float-reverse {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(10px); }
+}
+
+.animate-float-reverse {
+  animation: float-reverse 6.5s ease-in-out infinite;
+}
+
+@keyframes gradient-flow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-gradient-flow {
+  animation: gradient-flow 14s ease-in-out infinite;
+}
+
+@keyframes aurora-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33% { transform: translate3d(110px, 55px, 0) scale(1.12); }
+  66% { transform: translate3d(-45px, 90px, 0) scale(0.92); }
+}
+
+.animate-aurora-a {
+  animation: aurora-a 16s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes aurora-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33% { transform: translate3d(-120px, -45px, 0) scale(1.1); }
+  66% { transform: translate3d(-40px, 85px, 0) scale(0.9); }
+}
+
+.animate-aurora-b {
+  animation: aurora-b 19s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes aurora-c {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(95px, -75px, 0) scale(1.16); }
+}
+
+.animate-aurora-c {
+  animation: aurora-c 22s ease-in-out infinite;
+  will-change: transform;
+}
+
+@keyframes aurora-hue {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: hue-rotate(0deg);
+  }
+  50% {
+    transform: translate3d(130px, 60px, 0) scale(1.15);
+    filter: hue-rotate(55deg);
+  }
+}
+
+.animate-aurora-hue {
+  animation: aurora-hue 18s ease-in-out infinite;
+  will-change: transform, filter;
+}
+
+@keyframes sun-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.1); opacity: 1; }
+}
+
+.animate-sun-pulse {
+  animation: sun-pulse 8s ease-in-out infinite;
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.95; }
+}
+
+.animate-twinkle {
+  animation: twinkle 4s ease-in-out infinite;
+}
+
+.animate-twinkle-slow {
+  animation: twinkle 6.5s ease-in-out infinite 1.5s;
+}
+
+@keyframes grid-scroll {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 48px; }
+}
+
+.animate-grid-scroll {
+  animation: grid-scroll 4.5s linear infinite;
+}
+
+@keyframes dots-drift {
+  0% { background-position: 0 0; }
+  100% { background-position: 40px 40px; }
+}
+
+.animate-dots-drift {
+  animation: dots-drift 14s linear infinite;
+}
+
+/* =========================================================
+   ВИЗУАЛЬНЫЕ МИРЫ (только на экране, не ломают печать A4)
+   ========================================================= */
 @media screen {
+  [class*="bg-[#F6F7FB]"],
+  [class*="bg-[#F4F7FB]"] {
+    background-color: transparent !important;
+  }
+
+  /* Живой перелив цвета на главных баннерах, шапках глав, активных вкладках и кнопке Сократа */
+  section.from-indigo-600,
+  section > .bg-gradient-to-r,
+  nav .from-indigo-600.to-violet-600,
+  button.from-indigo-600.to-violet-600 {
+    background-size: 240% 240% !important;
+    animation: gradient-flow 9s ease-in-out infinite;
+  }
+
+  /* Контрастные пилюли для заголовков секций и меток прямо на цветном фоне */
+  main > section > h2.uppercase,
+  main > section > div > h2.uppercase {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+    padding: 0.3rem 0.8rem;
+    border-radius: 9999px;
+    background-color: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 2px 8px -2px rgba(15, 23, 42, 0.08);
+  }
+
+  main > section > div > span.text-slate-400,
+  main > section > div > a.text-indigo-600 {
+    padding: 0.25rem 0.7rem;
+    border-radius: 9999px;
+    background-color: rgba(255, 255, 255, 0.76);
+    backdrop-filter: blur(10px);
+    color: #0F172A;
+    font-weight: 700;
+  }
+
+  /* Контрастный подзаголовок под H1 прямо на цветном фоне (Сегодня, Тренажёры) */
+  :is(html:not([data-theme]), [data-theme="ocean"], [data-theme="sunset"], [data-theme="comic"])
+    main > section > div > p.text-slate-500,
+  :is(html:not([data-theme]), [data-theme="ocean"], [data-theme="sunset"], [data-theme="comic"])
+    main > div > div > p.text-slate-500 {
+    color: #1E293B;
+    font-weight: 600;
+  }
+
+  :is(html:not([data-theme]), [data-theme="ocean"], [data-theme="sunset"], [data-theme="comic"])
+    main > section > div > h2.text-slate-500 {
+    color: #0F172A;
+  }
+
+  /* Непрозрачная закреплённая колонка «Ученик» в журнале */
+  table th.sticky {
+    background-color: #F8FAFC !important;
+  }
+  table td.sticky {
+    background-color: #FFFFFF !important;
+  }
+
+  /* -------------------------------------------------------
+     1. ОКЕАНСКОЕ СТЕКЛО — Матовые стеклянные карточки + Сапфир
+     ------------------------------------------------------- */
+  html:not([data-theme]),
+  html[data-theme="ocean"] {
+    --color-indigo-50: #E0F2FE;
+    --color-indigo-100: #BAE6FD;
+    --color-indigo-200: #7DD3FC;
+    --color-indigo-300: #38BDF8;
+    --color-indigo-400: #0EA5E9;
+    --color-indigo-500: #0284C7;
+    --color-indigo-600: #0369A1;
+    --color-indigo-700: #075985;
+    --color-indigo-800: #0C4A6E;
+    --color-indigo-900: #082F49;
+    --color-indigo-950: #042F2E;
+
+    --color-violet-50: #ECFEFF;
+    --color-violet-100: #CFFAFE;
+    --color-violet-200: #A5F3FC;
+    --color-violet-300: #67E8F9;
+    --color-violet-500: #06B6D4;
+    --color-violet-600: #0891B2;
+    --color-violet-700: #0E7490;
+    --color-violet-800: #155E75;
+
+    --color-purple-500: #2563EB;
+    --color-purple-600: #1D4ED8;
+    --color-fuchsia-500: #14B8A6;
+    --color-fuchsia-600: #0D9488;
+  }
+
+  html:not([data-theme]) header,
+  [data-theme="ocean"] header {
+    background-color: rgba(255, 255, 255, 0.72) !important;
+    backdrop-filter: blur(18px);
+    border-color: rgba(255, 255, 255, 0.75) !important;
+  }
+
+  html:not([data-theme]) main .bg-white,
+  [data-theme="ocean"] main .bg-white {
+    background-color: rgba(255, 255, 255, 0.76);
+    backdrop-filter: blur(16px);
+    border-color: rgba(255, 255, 255, 0.85);
+    box-shadow: 0 12px 32px -14px rgba(3, 105, 161, 0.25);
+  }
+
+  html:not([data-theme]) .theme-popover,
+  [data-theme="ocean"] .theme-popover {
+    background-color: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(16px);
+  }
+
+  /* -------------------------------------------------------
+     2. ТЁПЛЫЙ ЗАКАТ — Кремовая бумага + Терракота + Коралл
+     ------------------------------------------------------- */
+  html[data-theme="sunset"] {
+    --color-indigo-50: #FFF7ED;
+    --color-indigo-100: #FFEDD5;
+    --color-indigo-200: #FED7AA;
+    --color-indigo-300: #FDBA74;
+    --color-indigo-400: #FB923C;
+    --color-indigo-500: #F97316;
+    --color-indigo-600: #EA580C;
+    --color-indigo-700: #C2410C;
+    --color-indigo-800: #9A3412;
+    --color-indigo-900: #7C2D12;
+    --color-indigo-950: #431407;
+
+    --color-violet-50: #FFF1F2;
+    --color-violet-100: #FFE4E6;
+    --color-violet-200: #FECDD3;
+    --color-violet-300: #FDA4AF;
+    --color-violet-500: #F43F5E;
+    --color-violet-600: #E11D48;
+    --color-violet-700: #BE123C;
+    --color-violet-800: #9F1239;
+
+    --color-purple-500: #D97706;
+    --color-purple-600: #B45309;
+    --color-fuchsia-500: #EC4899;
+    --color-fuchsia-600: #BE185D;
+  }
+
+  [data-theme="sunset"] header {
+    background-color: rgba(255, 250, 243, 0.82) !important;
+    backdrop-filter: blur(16px);
+    border-color: rgba(234, 88, 12, 0.2) !important;
+  }
+
+  [data-theme="sunset"] main .bg-white {
+    background-color: rgba(255, 251, 246, 0.88);
+    backdrop-filter: blur(12px);
+    border-color: rgba(234, 88, 12, 0.2);
+    box-shadow: 0 12px 30px -14px rgba(154, 52, 18, 0.22);
+  }
+
+  [data-theme="sunset"] table th.sticky {
+    background-color: #FFF7ED !important;
+  }
+  [data-theme="sunset"] table td.sticky {
+    background-color: #FFFBF6 !important;
+  }
+
+  [data-theme="sunset"] .text-slate-900 {
+    color: #2A1710;
+  }
+
+  [data-theme="sunset"] .text-slate-800 {
+    color: #432519;
+  }
+
+  [data-theme="sunset"] .text-slate-500,
+  [data-theme="sunset"] .text-slate-600 {
+    color: #7C5849;
+  }
+
+  [data-theme="sunset"] main > section > div > p.text-slate-500,
+  [data-theme="sunset"] main > div > div > p.text-slate-500 {
+    color: #432519;
+  }
+
+  /* -------------------------------------------------------
+     3. КОМИКС-ЗИН — Жёлтый поп-арт + Толстые чёрные контуры
+     ------------------------------------------------------- */
+  html[data-theme="comic"] {
+    --color-indigo-50: #EFF6FF;
+    --color-indigo-100: #DBEAFE;
+    --color-indigo-200: #93C5FD;
+    --color-indigo-300: #60A5FA;
+    --color-indigo-400: #3B82F6;
+    --color-indigo-500: #2563EB;
+    --color-indigo-600: #1D4ED8;
+    --color-indigo-700: #1E40AF;
+    --color-indigo-800: #1E3A8A;
+    --color-indigo-900: #0F172A;
+
+    --color-violet-50: #FDF2F8;
+    --color-violet-100: #FCE7F3;
+    --color-violet-200: #FBCFE8;
+    --color-violet-500: #EC4899;
+    --color-violet-600: #DB2777;
+    --color-violet-700: #BE185D;
+
+    --color-purple-500: #9333EA;
+    --color-purple-600: #7E22CE;
+    --color-fuchsia-500: #F43F5E;
+    --color-fuchsia-600: #E11D48;
+  }
+  [data-theme="comic"] main section .grid > a.rounded-2xl {
+    border: 2.5px solid #0F172A !important;
+    box-shadow: 4px 4px 0 #0F172A;
+  }
+
+  [data-theme="comic"] main section .grid > a.rounded-2xl:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0 #0F172A;
+  }
+  [data-theme="comic"] h1,
+  [data-theme="comic"] h2 {
+    letter-spacing: -0.025em;
+  }
+
+  [data-theme="comic"] header {
+    background-color: #FFFFFF !important;
+    border-bottom: 3px solid #0F172A !important;
+  }
+
+  [data-theme="comic"] section.from-indigo-600 {
+    background-image: linear-gradient(120deg, #2563EB 0%, #DB2777 50%, #F97316 100%) !important;
+    border: 3px solid #0F172A !important;
+    box-shadow: 7px 7px 0 #0F172A !important;
+  }
+
+  [data-theme="comic"] section > .bg-gradient-to-r {
+    border-bottom: 2.5px solid #0F172A;
+  }
+
+  [data-theme="comic"] main > section > h2.uppercase,
+  [data-theme="comic"] main > section > div > h2.uppercase,
+  [data-theme="comic"] main > section > div > span.text-slate-400,
+  [data-theme="comic"] main > section > div > a.text-indigo-600 {
+    background-color: #FFFFFF;
+    border: 2px solid #0F172A;
+    box-shadow: 2px 2px 0 #0F172A;
+  }
+
+  /* Единые жирные рамки и тени на всех главных карточках и полосах */
+  [data-theme="comic"] main .rounded-3xl,
+  [data-theme="comic"] main > .rounded-2xl.bg-white,
+  [data-theme="comic"] main > div > .rounded-2xl.bg-white,
+  [data-theme="comic"] main nav.rounded-2xl {
+    border-radius: 1rem;
+    border: 2.5px solid #0F172A !important;
+    box-shadow: 5px 5px 0 #0F172A;
+  }
+
+  [data-theme="comic"] main nav.rounded-2xl .from-indigo-600 {
+    border: 2px solid #0F172A;
+    box-shadow: 2px 2px 0 #0F172A;
+  }
+
+  [data-theme="comic"] .card-lift {
+    border-radius: 0.9rem;
+    border: 2.5px solid #0F172A !important;
+    box-shadow: 4px 4px 0 #0F172A;
+  }
+
+  [data-theme="comic"] .card-lift:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 7px 7px 0 #0F172A;
+  }
+
+  [data-theme="comic"] .btn-tactile {
+    border-radius: 0.75rem;
+    border: 2.5px solid #0F172A !important;
+    box-shadow: 3px 3px 0 #0F172A;
+  }
+
+  [data-theme="comic"] .btn-tactile:hover:not(:disabled) {
+    transform: translate(-1px, -1px);
+    box-shadow: 4px 4px 0 #0F172A;
+  }
+
+  [data-theme="comic"] .btn-tactile:active:not(:disabled) {
+    transform: translate(2px, 2px);
+    box-shadow: 1px 1px 0 #0F172A;
+  }
+
+  [data-theme="comic"] input,
+  [data-theme="comic"] textarea,
+  [data-theme="comic"] select {
+    border-width: 2px;
+    border-color: #0F172A;
+    border-radius: 0.75rem;
+  }
+
+  /* -------------------------------------------------------
+     4. ШКОЛЬНАЯ ДОСКА (Тёмная изумрудная палитра + Мел)
+     ------------------------------------------------------- */
+  html[data-theme="chalk"] {
+    --color-indigo-500: #10B981;
+    --color-indigo-600: #059669;
+    --color-indigo-700: #047857;
+    --color-indigo-800: #065F46;
+    --color-violet-500: #0D9488;
+    --color-violet-600: #0F766E;
+    --color-fuchsia-500: #D97706;
+    --color-fuchsia-600: #B45309;
+  }
+
+  [data-theme="chalk"] header {
+    background-color: rgba(11, 33, 27, 0.88) !important;
+    backdrop-filter: blur(14px);
+    border-color: rgba(253, 224, 71, 0.22) !important;
+  }
+
+  [data-theme="chalk"] .bg-white {
+    background-color: rgba(18, 49, 40, 0.88);
+    backdrop-filter: blur(8px);
+  }
+  [data-theme="chalk"] .theme-popover {
+    background-color: #13352B;
+  }
+  [data-theme="chalk"] table th.sticky {
+    background-color: #184035 !important;
+  }
+  [data-theme="chalk"] table td.sticky {
+    background-color: #123128 !important;
+  }
+  [data-theme="chalk"] .bg-white\/95,
+  [data-theme="chalk"] .bg-white\/90 {
+    background-color: rgba(11, 33, 27, 0.94);
+  }
+  [data-theme="chalk"] .bg-slate-50,
+  [data-theme="chalk"] .bg-slate-50\/70 {
+    background-color: #184035;
+  }
+  [data-theme="chalk"] .bg-slate-100,
+  [data-theme="chalk"] .bg-slate-100\/90 {
+    background-color: #1E4E41;
+  }
+  [data-theme="chalk"] .bg-slate-200 {
+    background-color: #276050;
+  }
+  [data-theme="chalk"] .bg-slate-900 {
+    background-color: #1D5A47;
+    border-color: rgba(253, 224, 71, 0.55) !important;
+    color: #FEF9C3;
+  }
+  [data-theme="chalk"] .bg-slate-900:hover {
+    background-color: #059669;
+    color: #FFFFFF;
+  }
+  [data-theme="chalk"] .border-slate-200,
+  [data-theme="chalk"] .border-slate-200\/80,
+  [data-theme="chalk"] .border-slate-200\/70,
+  [data-theme="chalk"] .border-slate-300 {
+    border-color: rgba(253, 224, 71, 0.22);
+  }
+  [data-theme="chalk"] .border-slate-100 {
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+
+  [data-theme="chalk"] section.from-indigo-600 {
+    background-image: linear-gradient(135deg, #0D5C48 0%, #0F766E 50%, #B45309 100%) !important;
+    border: 2px dashed rgba(253, 224, 71, 0.55) !important;
+  }
+
+  /* -------------------------------------------------------
+     5. КИБЕР-КОСМОС (Тёмное матовое стекло + Неон)
+     ------------------------------------------------------- */
+  html[data-theme="cosmos"] {
+    --color-indigo-500: #6366F1;
+    --color-indigo-600: #4F46E5;
+    --color-indigo-700: #4338CA;
+    --color-violet-500: #8B5CF6;
+    --color-violet-600: #7C3AED;
+    --color-fuchsia-500: #EC4899;
+    --color-fuchsia-600: #DB2777;
+  }
+
+  [data-theme="cosmos"] header {
+    background-color: rgba(8, 12, 28, 0.78) !important;
+    backdrop-filter: blur(18px);
+    border-color: rgba(129, 140, 248, 0.25) !important;
+  }
+
   [data-theme="cosmos"] .bg-white {
-    background-color: #131B31;
+    background-color: rgba(15, 23, 46, 0.76);
+    backdrop-filter: blur(16px);
+  }
+  [data-theme="cosmos"] .theme-popover {
+    background-color: rgba(15, 23, 46, 0.96);
+  }
+  [data-theme="cosmos"] table th.sticky {
+    background-color: #16203C !important;
+  }
+  [data-theme="cosmos"] table td.sticky {
+    background-color: #10172E !important;
   }
   [data-theme="cosmos"] .bg-white\/95,
   [data-theme="cosmos"] .bg-white\/90 {
-    background-color: rgba(15, 23, 42, 0.9);
+    background-color: rgba(10, 15, 34, 0.92);
   }
-  [data-theme="cosmos"] [class*="bg-[#F6F7FB]"],
-  [data-theme="cosmos"] [class*="bg-[#F4F7FB]"] {
-    background-color: transparent;
-  }
-  [data-theme="cosmos"] .bg-slate-50 {
-    background-color: #1A2440;
+  [data-theme="cosmos"] .bg-slate-50,
+  [data-theme="cosmos"] .bg-slate-50\/70 {
+    background-color: rgba(26, 36, 68, 0.78);
   }
   [data-theme="cosmos"] .bg-slate-100,
   [data-theme="cosmos"] .bg-slate-100\/90 {
-    background-color: #202C4C;
+    background-color: rgba(34, 48, 86, 0.85);
   }
   [data-theme="cosmos"] .bg-slate-200 {
     background-color: #2A385E;
+  }
+  [data-theme="cosmos"] .bg-slate-900 {
+    background-color: #1E294E;
+    border-color: rgba(129, 140, 248, 0.5) !important;
+  }
+  [data-theme="cosmos"] .bg-slate-900:hover {
+    background-color: #4F46E5;
   }
   [data-theme="cosmos"] .border-slate-200,
   [data-theme="cosmos"] .border-slate-200\/80,
   [data-theme="cosmos"] .border-slate-200\/70,
   [data-theme="cosmos"] .border-slate-300 {
-    border-color: #2A385E;
+    border-color: rgba(129, 140, 248, 0.26);
   }
   [data-theme="cosmos"] .border-slate-100 {
-    border-color: #1F2B49;
+    border-color: rgba(129, 140, 248, 0.14);
   }
-  [data-theme="cosmos"] .text-slate-900 {
-    color: #F8FAFC;
+  [data-theme="cosmos"] main .rounded-3xl {
+    box-shadow: 0 14px 36px -14px rgba(0, 0, 0, 0.65);
   }
-  [data-theme="cosmos"] .text-slate-800 {
+
+  /* -------------------------------------------------------
+     ОБЩАЯ КОНТРАСТНОСТЬ ТЕКСТА И БЕЙДЖЕЙ ДЛЯ ТЁМНЫХ МИРОВ (chalk + cosmos)
+     ------------------------------------------------------- */
+  :is([data-theme="chalk"], [data-theme="cosmos"]) main > section > h2.uppercase,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) main > section > div > h2.uppercase,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) main > section > div > span.text-slate-400,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) main > section > div > a.text-indigo-600 {
+    background-color: rgba(15, 23, 42, 0.58);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     color: #E2E8F0;
   }
-  [data-theme="cosmos"] .text-slate-700 {
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-slate-900 {
+    color: #F8FAFC;
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-slate-800 {
+    color: #E2E8F0;
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-slate-700 {
     color: #CBD5E1;
   }
-  [data-theme="cosmos"] .text-slate-600 {
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-slate-600,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-slate-500 {
     color: #94A3B8;
   }
-  [data-theme="cosmos"] .text-slate-500 {
-    color: #94A3B8;
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-indigo-50,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-indigo-50\/70,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-indigo-50\/50,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-indigo-50\/40 {
+    background-color: rgba(99, 102, 241, 0.18);
   }
-  [data-theme="cosmos"] .bg-indigo-50,
-  [data-theme="cosmos"] .bg-indigo-50\/70,
-  [data-theme="cosmos"] .bg-indigo-50\/50 {
-    background-color: rgba(99, 102, 241, 0.16);
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-indigo-100 {
+    background-color: rgba(99, 102, 241, 0.26);
   }
-  [data-theme="cosmos"] .bg-emerald-50,
-  [data-theme="cosmos"] .bg-emerald-50\/90,
-  [data-theme="cosmos"] .bg-emerald-50\/70 {
-    background-color: rgba(16, 185, 129, 0.15);
+  [data-theme="chalk"] .bg-indigo-50,
+  [data-theme="chalk"] .bg-indigo-50\/70,
+  [data-theme="chalk"] .bg-indigo-50\/50,
+  [data-theme="chalk"] .bg-indigo-100 {
+    background-color: rgba(16, 185, 129, 0.2);
   }
-  [data-theme="cosmos"] .bg-amber-50,
-  [data-theme="cosmos"] .bg-amber-50\/40 {
-    background-color: rgba(245, 158, 11, 0.14);
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-emerald-50,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-emerald-50\/90,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-emerald-50\/70,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-emerald-50\/50,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-emerald-50\/40 {
+    background-color: rgba(16, 185, 129, 0.16);
   }
-  [data-theme="cosmos"] .bg-sky-50,
-  [data-theme="cosmos"] .bg-sky-50\/60 {
-    background-color: rgba(14, 165, 233, 0.14);
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-emerald-100,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-emerald-100\/70 {
+    background-color: rgba(16, 185, 129, 0.25);
   }
-  [data-theme="cosmos"] .bg-rose-50 {
-    background-color: rgba(244, 63, 94, 0.16);
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-amber-50,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-amber-50\/70,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-amber-50\/50,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-amber-50\/40 {
+    background-color: rgba(245, 158, 11, 0.16);
   }
-  [data-theme="cosmos"] .text-indigo-900,
-  [data-theme="cosmos"] .text-indigo-800,
-  [data-theme="cosmos"] .text-indigo-700 {
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-amber-100 {
+    background-color: rgba(245, 158, 11, 0.26);
+  }
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-orange-50 {
+    background-color: rgba(249, 115, 22, 0.2);
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-orange-100 {
+    background-color: rgba(249, 115, 22, 0.26);
+  }
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-sky-50,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-sky-50\/60 {
+    background-color: rgba(14, 165, 233, 0.16);
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-sky-100 {
+    background-color: rgba(14, 165, 233, 0.26);
+  }
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-rose-50,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-rose-50\/50 {
+    background-color: rgba(244, 63, 94, 0.18);
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-rose-100 {
+    background-color: rgba(244, 63, 94, 0.26);
+  }
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-violet-50,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-violet-50\/40,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-purple-50 {
+    background-color: rgba(139, 92, 246, 0.2);
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-violet-100,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .bg-purple-100 {
+    background-color: rgba(139, 92, 246, 0.28);
+  }
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .from-emerald-50\/90,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .from-emerald-50 {
+    background-image: linear-gradient(135deg, rgba(16, 185, 129, 0.24), rgba(15, 23, 42, 0.88));
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .from-violet-50,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .from-indigo-50\/70 {
+    background-image: linear-gradient(135deg, rgba(99, 102, 241, 0.24), rgba(15, 23, 42, 0.88));
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .from-amber-100 {
+    background-image: linear-gradient(90deg, rgba(245, 158, 11, 0.28), rgba(16, 185, 129, 0.24));
+  }
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-indigo-950,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-indigo-900,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-indigo-800,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-indigo-700,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-indigo-600 {
     color: #C7D2FE;
   }
-  [data-theme="cosmos"] .text-emerald-950,
-  [data-theme="cosmos"] .text-emerald-900,
-  [data-theme="cosmos"] .text-emerald-800,
-  [data-theme="cosmos"] .text-emerald-700 {
-    color: #A7F3D0;
-  }
-  [data-theme="cosmos"] .text-amber-900,
-  [data-theme="cosmos"] .text-amber-800 {
+  [data-theme="chalk"] .text-indigo-950,
+  [data-theme="chalk"] .text-indigo-900,
+  [data-theme="chalk"] .text-indigo-800,
+  [data-theme="chalk"] .text-indigo-700,
+  [data-theme="chalk"] .text-indigo-600 {
     color: #FDE68A;
   }
-  [data-theme="cosmos"] .text-sky-800,
-  [data-theme="cosmos"] .text-sky-700 {
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-emerald-950,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-emerald-900,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-emerald-800,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-emerald-700,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-emerald-600 {
+    color: #A7F3D0;
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-amber-950,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-amber-900,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-amber-800,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-amber-700 {
+    color: #FDE68A;
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-orange-800,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-orange-700 {
+    color: #FDBA74;
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-sky-900,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-sky-800,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-sky-700 {
     color: #BAE6FD;
   }
-  [data-theme="cosmos"] .border-indigo-200,
-  [data-theme="cosmos"] .border-indigo-100 {
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-rose-900,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-rose-800,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-rose-700,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-rose-600 {
+    color: #FDA4AF;
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-violet-950,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-violet-900,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-violet-800,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-violet-700,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-purple-800,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .text-purple-700 {
+    color: #DDD6FE;
+  }
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-indigo-200,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-indigo-200\/80,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-indigo-100 {
     border-color: rgba(129, 140, 248, 0.35);
   }
-  [data-theme="cosmos"] .border-emerald-200,
-  [data-theme="cosmos"] .border-emerald-300 {
-    border-color: rgba(52, 211, 153, 0.38);
+  [data-theme="chalk"] .border-indigo-200,
+  [data-theme="chalk"] .border-indigo-200\/80,
+  [data-theme="chalk"] .border-indigo-100 {
+    border-color: rgba(253, 224, 71, 0.32);
   }
-  [data-theme="cosmos"] .border-amber-200,
-  [data-theme="cosmos"] .border-amber-300 {
-    border-color: rgba(251, 191, 36, 0.38);
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-emerald-200,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-emerald-300 {
+    border-color: rgba(52, 211, 153, 0.4);
   }
-  [data-theme="cosmos"] .border-sky-200 {
-    border-color: rgba(56, 189, 248, 0.35);
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-amber-200,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-amber-300 {
+    border-color: rgba(251, 191, 36, 0.4);
   }
-  [data-theme="cosmos"] input,
-  [data-theme="cosmos"] textarea,
-  [data-theme="cosmos"] select {
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-orange-200 {
+    border-color: rgba(251, 146, 60, 0.4);
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-sky-200,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-sky-300 {
+    border-color: rgba(56, 189, 248, 0.38);
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-rose-200,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-rose-300 {
+    border-color: rgba(251, 113, 133, 0.4);
+  }
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-violet-200,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-violet-200\/70,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-violet-300,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) .border-purple-200 {
+    border-color: rgba(167, 139, 250, 0.4);
+  }
+
+  :is([data-theme="chalk"], [data-theme="cosmos"]) input,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) textarea,
+  :is([data-theme="chalk"], [data-theme="cosmos"]) select {
     color: #F1F5F9;
+  }
+  [data-theme="chalk"] option {
+    background-color: #13352B;
+    color: #F8FAFC;
   }
   [data-theme="cosmos"] option {
-    background-color: #131B31;
+    background-color: #111830;
     color: #F1F5F9;
+  }
+}
+
+/* Уважаем системную настройку отключения анимаций */
+@media (prefers-reduced-motion: reduce) {
+  .animate-gradient-flow,
+  .animate-aurora-a,
+  .animate-aurora-b,
+  .animate-aurora-c,
+  .animate-aurora-hue,
+  .animate-sun-pulse,
+  .animate-twinkle,
+  .animate-twinkle-slow,
+  .animate-grid-scroll,
+  .animate-dots-drift,
+  .animate-float,
+  .animate-float-reverse,
+  section.from-indigo-600,
+  section > .bg-gradient-to-r,
+  nav .from-indigo-600.to-violet-600,
+  button.from-indigo-600.to-violet-600 {
+    animation: none !important;
   }
 }

@@ -4,14 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import ThemePicker from '@/components/layout/ThemePicker';
 import { isSoundEnabled, playSound, setSoundEnabled } from '@/lib/audio/sound';
-import {
-  applyTheme,
-  cycleTheme,
-  getSavedTheme,
-  THEME_OPTIONS,
-  type AppTheme,
-} from '@/lib/theme/theme';
 import type { Profile } from '@/types/db';
 
 interface Props {
@@ -31,18 +25,14 @@ export default function AppNav({ profile }: Props) {
   const isTeacher = profile?.role === 'teacher';
 
   const [soundOn, setSoundOn] = useState(true);
-  const [theme, setTheme] = useState<AppTheme>('bright');
   const [teacherMenuOpen, setTeacherMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setSoundOn(isSoundEnabled());
-    setTheme(getSavedTheme());
 
     const syncSound = () => setSoundOn(isSoundEnabled());
-    const syncTheme = () => setTheme(getSavedTheme());
     window.addEventListener('mathhub-sound-change', syncSound);
-    window.addEventListener('mathhub-theme-change', syncTheme);
 
     function handleClickOutside(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -53,7 +43,6 @@ export default function AppNav({ profile }: Props) {
 
     return () => {
       window.removeEventListener('mathhub-sound-change', syncSound);
-      window.removeEventListener('mathhub-theme-change', syncTheme);
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
@@ -65,21 +54,11 @@ export default function AppNav({ profile }: Props) {
     if (next) playSound('click');
   }
 
-  function handleCycleTheme() {
-    const next = cycleTheme(theme);
-    applyTheme(next);
-    setTheme(next);
-    playSound('click');
-  }
-
   async function handleLogout() {
     await supabase.auth.signOut();
     router.push('/login');
     router.refresh();
   }
-
-  const currentThemeMeta =
-    THEME_OPTIONS.find((t) => t.id === theme) || THEME_OPTIONS[0];
 
   return (
     <>
@@ -124,7 +103,7 @@ export default function AppNav({ profile }: Props) {
             })}
           </nav>
 
-          {/* Правая часть: компактное меню учителя, тема, звук, профиль */}
+          {/* Правая часть: компактное меню учителя, стиль, звук, профиль */}
           <div className="flex items-center gap-1.5 sm:gap-2">
             {isTeacher && (
               <div className="relative" ref={menuRef}>
@@ -175,16 +154,8 @@ export default function AppNav({ profile }: Props) {
               </div>
             )}
 
-            {/* Переключатель темы оформления */}
-            <button
-              type="button"
-              onClick={handleCycleTheme}
-              title={`Тема: ${currentThemeMeta.label} (нажми, чтобы сменить)`}
-              className="h-9 px-2.5 rounded-xl border border-slate-200 bg-slate-50 hover:border-indigo-300 flex items-center gap-1.5 text-xs font-bold text-slate-700 transition"
-            >
-              <span className="text-sm leading-none">{currentThemeMeta.icon}</span>
-              <span className="hidden lg:inline">{currentThemeMeta.label}</span>
-            </button>
+            {/* Выбор стиля платформы */}
+            <ThemePicker />
 
             {/* Звук */}
             <button

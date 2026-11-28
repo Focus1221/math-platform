@@ -1,11 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { gcd, lcm, randInt } from '@/lib/math/utils';
 
 interface Props {
   onResult: (isCorrect: boolean) => void;
 }
+
+const INITIAL_PAIR = {
+  a: { n: 2, d: 3 },
+  b: { n: 3, d: 5 },
+};
 
 function makeComparePair() {
   const d1 = randInt(2, 9);
@@ -29,8 +34,8 @@ function PizzaCircles({ n, d }: { n: number; d: number }) {
                 cx={60}
                 cy={60}
                 r={52}
-                fill={filled > 0 ? '#6366F1' : '#E2E8F0'}
-                stroke="#ffffff"
+                fill={filled > 0 ? 'var(--color-indigo-500, #6366F1)' : 'rgba(148, 163, 184, 0.28)'}
+                stroke="var(--surface-card, #ffffff)"
                 strokeWidth={2}
               />
             ) : (
@@ -46,8 +51,8 @@ function PizzaCircles({ n, d }: { n: number; d: number }) {
                   <path
                     key={i}
                     d={`M60,60 L${x1.toFixed(1)},${y1.toFixed(1)} A52,52 0 ${largeArc},1 ${x2.toFixed(1)},${y2.toFixed(1)} Z`}
-                    fill={i < filled ? '#6366F1' : '#E2E8F0'}
-                    stroke="#ffffff"
+                    fill={i < filled ? 'var(--color-indigo-500, #6366F1)' : 'rgba(148, 163, 184, 0.28)'}
+                    stroke="var(--surface-card, #ffffff)"
                     strokeWidth={2}
                   />
                 );
@@ -65,8 +70,21 @@ export default function FractionsSim({ onResult }: Props) {
   const [num, setNum] = useState(6);
   const [den, setDen] = useState(8);
 
-  const [pair, setPair] = useState(() => makeComparePair());
+  const [pair, setPair] = useState(INITIAL_PAIR);
   const [cmpFeedback, setCmpFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearPendingTimer() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => clearPendingTimer();
+  }, []);
 
   const g = gcd(num, den);
   const isProper = num < den;
@@ -74,11 +92,13 @@ export default function FractionsSim({ onResult }: Props) {
   const rem = num % den;
 
   function nextCompare() {
+    clearPendingTimer();
     setPair(makeComparePair());
     setCmpFeedback(null);
   }
 
   function handleCompare(sign: '<' | '=' | '>') {
+    clearPendingTimer();
     const left = pair.a.n * pair.b.d;
     const right = pair.b.n * pair.a.d;
     const trueSign = left < right ? '<' : left > right ? '>' : '=';
@@ -93,7 +113,7 @@ export default function FractionsSim({ onResult }: Props) {
         ok: true,
         text: `✓ Верно! Общий знаменатель ${commonD}: ${n1}/${commonD} ${trueSign} ${n2}/${commonD}.`,
       });
-      setTimeout(nextCompare, 1400);
+      timerRef.current = setTimeout(nextCompare, 1400);
     } else {
       setCmpFeedback({
         ok: false,
@@ -107,7 +127,10 @@ export default function FractionsSim({ onResult }: Props) {
       <div className="inline-flex p-1 bg-white rounded-xl border border-slate-200">
         <button
           type="button"
-          onClick={() => setMode('explore')}
+          onClick={() => {
+            clearPendingTimer();
+            setMode('explore');
+          }}
           className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
             mode === 'explore' ? 'bg-indigo-600 text-white' : 'text-slate-600'
           }`}
@@ -140,7 +163,7 @@ export default function FractionsSim({ onResult }: Props) {
                 {Array.from({ length: den }, (_, i) => (
                   <div
                     key={i}
-                    className={`flex-1 border-r last:border-r-0 border-white transition-colors ${
+                    className={`flex-1 border-r last:border-r-0 border-white/60 transition-colors ${
                       i < Math.min(num, den) ? 'bg-indigo-500' : 'bg-slate-200'
                     }`}
                   />
@@ -223,7 +246,7 @@ export default function FractionsSim({ onResult }: Props) {
                 {Array.from({ length: pair.a.d }, (_, i) => (
                   <div
                     key={i}
-                    className={`flex-1 border-r last:border-r-0 border-white ${
+                    className={`flex-1 border-r last:border-r-0 border-white/60 ${
                       i < pair.a.n ? 'bg-indigo-500' : 'bg-slate-200'
                     }`}
                   />
@@ -252,7 +275,7 @@ export default function FractionsSim({ onResult }: Props) {
                 {Array.from({ length: pair.b.d }, (_, i) => (
                   <div
                     key={i}
-                    className={`flex-1 border-r last:border-r-0 border-white ${
+                    className={`flex-1 border-r last:border-r-0 border-white/60 ${
                       i < pair.b.n ? 'bg-emerald-500' : 'bg-slate-200'
                     }`}
                   />
@@ -262,7 +285,11 @@ export default function FractionsSim({ onResult }: Props) {
           </div>
 
           {cmpFeedback && (
-            <div className={`text-center text-xs sm:text-sm font-semibold ${cmpFeedback.ok ? 'text-emerald-600' : 'text-rose-600'}`}>
+            <div
+              className={`text-center text-xs sm:text-sm font-semibold ${
+                cmpFeedback.ok ? 'text-emerald-600' : 'text-rose-600'
+              }`}
+            >
               {cmpFeedback.text}
             </div>
           )}

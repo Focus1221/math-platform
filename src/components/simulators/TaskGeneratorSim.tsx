@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import MathKeypad, { type KeypadKey } from '@/components/ui/MathKeypad';
 import { gcd, lcm, randInt } from '@/lib/math/utils';
 
 type GenCategory =
@@ -30,6 +31,59 @@ const CAT_LABELS: Record<GenCategory, string> = {
   fractions_calc: 'Обыкновенные дроби',
   decimals: 'Десятичные дроби',
   percents: 'Проценты',
+};
+
+const GENERATOR_KEYS: KeypadKey[] = [
+  { label: ',', value: ',', title: 'Десятичная запятая' },
+  { label: '/', value: '/', title: 'Черта дроби (например 3/4)' },
+  { label: '−', value: '-', title: 'Минус' },
+];
+
+const INITIAL_TASKS: Record<GenCategory, GenTask> = {
+  natural: {
+    prompt: 'Запиши наименьшее чётное число, которое строго больше числа 48:',
+    answer: '50',
+    hint: 'Чётные числа оканчиваются на 0, 2, 4, 6, 8. Проверь числа сразу после 48.',
+  },
+  arithmetic: {
+    prompt: 'Найди значение выражения (соблюдай порядок действий): 14 + 6 · 4',
+    answer: '38',
+    hint: 'Сначала умножение: 6 · 4 = 24, затем сложение: 14 + 24.',
+  },
+  expressions: {
+    prompt: 'Упрости выражение 3x + 4x и найди его значение при x = 5:',
+    answer: '35',
+    hint: 'Сложи коэффициенты: (3 + 4) · x = 7x, затем умножь 7 на 5.',
+  },
+  equations: {
+    prompt: 'Реши уравнение: x + 18 = 45',
+    answer: '27',
+    hint: 'Чтобы найти неизвестное слагаемое, из суммы 45 вычти 18.',
+  },
+  powers: {
+    prompt: 'Вычисли значение степени: 5²',
+    answer: '25',
+    hint: '5² означает умножить 5 само на себя 2 раза.',
+  },
+  fractions_calc: {
+    prompt: 'Сложи дроби и (если нужно) сократи ответ: 1/8 + 3/8',
+    placeholder: 'Например: 3/4 или 2',
+    answer: '1/2',
+    altAnswer: '4/8',
+    hint: 'Сложи числители (1 + 3 = 4), затем сократи дробь 4/8 на 4.',
+  },
+  decimals: {
+    prompt: 'Вычисли сумму: 2,4 + 1,5',
+    placeholder: 'Например: 4,7',
+    answer: '3,9',
+    altAnswer: '3.9',
+    hint: 'Запиши запятую под запятой и сложи разряды: 2,4 + 1,5.',
+  },
+  percents: {
+    prompt: 'Найди 25% от числа 80:',
+    answer: '20',
+    hint: 'Раздели 80 на 100 (1% = 0,8) и умножь на 25.',
+  },
 };
 
 function resolveCategory(simType: string): GenCategory {
@@ -175,25 +229,51 @@ interface Props {
 }
 
 export default function TaskGeneratorSim({ initialSimType, onResult }: Props) {
-  const [category, setCategory] = useState<GenCategory>(() => resolveCategory(initialSimType));
+  const [category, setCategory] = useState<GenCategory>(() =>
+    resolveCategory(initialSimType)
+  );
   const [difficulty, setDifficulty] = useState<'base' | 'pro'>('base');
-  const [task, setTask] = useState<GenTask>(() =>
-    generateMathTask(resolveCategory(initialSimType), 'base')
+  const [task, setTask] = useState<GenTask>(
+    () => INITIAL_TASKS[resolveCategory(initialSimType)]
   );
   const [input, setInput] = useState('');
   const [showHint, setShowHint] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const difficultyRef = useRef(difficulty);
+  const prevSimTypeRef = useRef(initialSimType);
+
   useEffect(() => {
+    difficultyRef.current = difficulty;
+  }, [difficulty]);
+
+  function clearPendingTimer() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => clearPendingTimer();
+  }, []);
+
+  useEffect(() => {
+    if (prevSimTypeRef.current === initialSimType) return;
+    prevSimTypeRef.current = initialSimType;
+    clearPendingTimer();
     const nextCat = resolveCategory(initialSimType);
     setCategory(nextCat);
-    setTask(generateMathTask(nextCat, difficulty));
+    setTask(generateMathTask(nextCat, difficultyRef.current));
     setInput('');
     setShowHint(false);
     setFeedback(null);
   }, [initialSimType]);
 
   function nextTask(cat = category, diff = difficulty) {
+    clearPendingTimer();
     setTask(generateMathTask(cat, diff));
     setInput('');
     setShowHint(false);
@@ -202,15 +282,24 @@ export default function TaskGeneratorSim({ initialSimType, onResult }: Props) {
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const norm = (s: string) => s.trim().replace(/\s+/g, '').replace('.', ',').toLowerCase();
+    clearPendingTimer();
+    const norm = (s: string) =>
+      s
+        .trim()
+        .replace(/\s+/g, '')
+        .replace(/−/g, '-')
+        .replace('.', ',')
+        .toLowerCase();
     const raw = norm(input);
     if (!raw) return;
 
-    const ok = raw === norm(task.answer) || (task.altAnswer ? raw === norm(task.altAnswer) : false);
+    const ok =
+      raw === norm(task.answer) ||
+      (task.altAnswer ? raw === norm(task.altAnswer) : false);
     onResult(ok);
     if (ok) {
       setFeedback({ ok: true, text: `✓ Верно! Ответ: ${task.answer}. Новый пример...` });
-      setTimeout(() => nextTask(), 1100);
+      timerRef.current = setTimeout(() => nextTask(), 1100);
     } else {
       setShowHint(true);
       setFeedback({ ok: false, text: '✗ Пока неверно. Посмотри подсказку ниже и попробуй ещё раз!' });
@@ -230,7 +319,9 @@ export default function TaskGeneratorSim({ initialSimType, onResult }: Props) {
           className="px-3 py-1.5 text-xs font-bold bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-indigo-500"
         >
           {(Object.entries(CAT_LABELS) as [GenCategory, string][]).map(([k, v]) => (
-            <option key={k} value={k}>Тема: {v}</option>
+            <option key={k} value={k}>
+              Тема: {v}
+            </option>
           ))}
         </select>
 
@@ -269,6 +360,7 @@ export default function TaskGeneratorSim({ initialSimType, onResult }: Props) {
 
         <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-2 max-w-md mx-auto">
           <input
+            ref={inputRef}
             type="text"
             autoComplete="off"
             value={input}
@@ -284,8 +376,19 @@ export default function TaskGeneratorSim({ initialSimType, onResult }: Props) {
           </button>
         </form>
 
+        <MathKeypad
+          value={input}
+          onChange={setInput}
+          inputRef={inputRef}
+          symbols={GENERATOR_KEYS}
+        />
+
         {feedback && (
-          <div className={`text-xs sm:text-sm font-semibold ${feedback.ok ? 'text-emerald-600' : 'text-rose-600'}`}>
+          <div
+            className={`text-xs sm:text-sm font-semibold ${
+              feedback.ok ? 'text-emerald-600' : 'text-rose-600'
+            }`}
+          >
             {feedback.text}
           </div>
         )}

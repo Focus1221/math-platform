@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { gcd, randInt } from '@/lib/math/utils';
 
 interface Props {
@@ -90,6 +90,15 @@ export default function PercentGridSim({ onResult }: Props) {
   const [answerInput, setAnswerInput] = useState('');
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearPendingTimer() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
   useEffect(() => {
     function stopDrag() {
       setDragValue(null);
@@ -97,6 +106,7 @@ export default function PercentGridSim({ onResult }: Props) {
     window.addEventListener('pointerup', stopDrag);
     window.addEventListener('pointercancel', stopDrag);
     return () => {
+      clearPendingTimer();
       window.removeEventListener('pointerup', stopDrag);
       window.removeEventListener('pointercancel', stopDrag);
     };
@@ -109,6 +119,7 @@ export default function PercentGridSim({ onResult }: Props) {
     mode === 'trainer' && (task.kind === 'read_percent' || task.kind === 'read_decimal');
 
   function startNewTask() {
+    clearPendingTimer();
     const next = makeTask();
     setTask(next);
     setAnswerInput('');
@@ -121,6 +132,7 @@ export default function PercentGridSim({ onResult }: Props) {
   }
 
   function switchMode(nextMode: 'explore' | 'trainer') {
+    clearPendingTimer();
     setMode(nextMode);
     setFeedback(null);
     if (nextMode === 'explore') {
@@ -139,7 +151,9 @@ export default function PercentGridSim({ onResult }: Props) {
 
   function handleCellEnter(idx: number) {
     if (isReadTask || dragValue === null) return;
-    setCells((prev) => (prev[idx] === dragValue ? prev : prev.map((v, i) => (i === idx ? dragValue : v))));
+    setCells((prev) =>
+      prev[idx] === dragValue ? prev : prev.map((v, i) => (i === idx ? dragValue : v))
+    );
   }
 
   function toggleRow(rowIdx: number) {
@@ -152,14 +166,19 @@ export default function PercentGridSim({ onResult }: Props) {
   }
 
   function handleCheckPaint() {
+    clearPendingTimer();
     const ok = filledCount === task.target;
     onResult(ok);
     if (ok) {
       setFeedback({
         ok: true,
-        text: `✓ Верно! ${task.kind === 'paint_decimal' || task.kind === 'paint_fraction' ? `${task.label} = ` : ''}${task.target}% (${task.target} клеток из 100).`,
+        text: `✓ Верно! ${
+          task.kind === 'paint_decimal' || task.kind === 'paint_fraction'
+            ? `${task.label} = `
+            : ''
+        }${task.target}% (${task.target} клеток из 100).`,
       });
-      setTimeout(startNewTask, 1300);
+      timerRef.current = setTimeout(startNewTask, 1300);
     } else {
       setFeedback({
         ok: false,
@@ -170,6 +189,7 @@ export default function PercentGridSim({ onResult }: Props) {
 
   function handleCheckRead(e: React.FormEvent) {
     e.preventDefault();
+    clearPendingTimer();
     const cleaned = answerInput.trim().replace(/\s+/g, '').replace('%', '').replace(',', '.');
     const num = Number(cleaned);
     if (!cleaned || Number.isNaN(num)) return;
@@ -185,7 +205,7 @@ export default function PercentGridSim({ onResult }: Props) {
         ok: true,
         text: `✓ Отлично! ${task.target} из 100 клеток — это ${task.target}% и десятичная дробь ${formatDecimal(task.target)}.`,
       });
-      setTimeout(startNewTask, 1300);
+      timerRef.current = setTimeout(startNewTask, 1300);
     } else {
       setFeedback({
         ok: false,

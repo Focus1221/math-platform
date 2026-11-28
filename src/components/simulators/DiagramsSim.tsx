@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import MathKeypad, { type KeypadKey } from '@/components/ui/MathKeypad';
 import { randInt } from '@/lib/math/utils';
 
 interface Props {
@@ -34,6 +35,18 @@ type DiagramTask =
     };
 
 const PALETTE = ['#4F46E5', '#10B981', '#F59E0B', '#EC4899', '#0EA5E9'];
+
+const DIAGRAM_KEYS: KeypadKey[] = [
+  { label: ',', value: ',', title: 'Десятичная запятая' },
+  { label: '°', value: '°', title: 'Градусы' },
+  { label: '%', value: '%', title: 'Проценты' },
+];
+
+const INITIAL_DIAGRAM_TASK: DiagramTask = {
+  kind: 'angle_from_percent',
+  percent: 25,
+  answer: 90,
+};
 
 const PRESETS: { name: string; items: Omit<SliceItem, 'id' | 'color'>[] }[] = [
   {
@@ -94,7 +107,6 @@ function makeDiagramTask(): DiagramTask {
       answer: Math.round((angle / 360) * 100),
     };
   }
-  // Столбчатая диаграмма с суммой ровно 20 или 25, чтобы процент всегда был целым
   const total = randInt(0, 1) === 0 ? 20 : 25;
   const labels = ['Яблоки', 'Груши', 'Бананы', 'Сливы'];
   const v0 = randInt(3, 8);
@@ -133,26 +145,47 @@ function PieSvg({
   if (total <= 0) {
     return (
       <svg viewBox="0 0 220 220" className="w-52 h-52 sm:w-56 sm:h-56 shrink-0">
-        <circle cx={CX} cy={CY} r={R} fill="#E2E8F0" />
-        <text x={CX} y={CY + 4} textAnchor="middle" fontSize={12} fill="#64748B" fontWeight={700}>
+        <circle cx={CX} cy={CY} r={R} fill="rgba(148, 163, 184, 0.25)" />
+        <text
+          x={CX}
+          y={CY + 4}
+          textAnchor="middle"
+          fontSize={12}
+          className="text-slate-500"
+          fill="currentColor"
+          fontWeight={700}
+        >
           Нет данных
         </text>
       </svg>
     );
   }
 
-  let cumDeg = 0;
+  const computedSlices: {
+    color: string;
+    startDeg: number;
+    sliceDeg: number;
+    pct: number;
+  }[] = [];
+
+  let currentDeg = 0;
+  for (const s of slices) {
+    const val = Math.max(0, s.value);
+    if (val === 0) continue;
+    const sliceDeg = (val / total) * 360;
+    computedSlices.push({
+      color: s.color,
+      startDeg: currentDeg,
+      sliceDeg,
+      pct: Math.round((val / total) * 100),
+    });
+    currentDeg += sliceDeg;
+  }
 
   return (
     <svg viewBox="0 0 220 220" className="w-52 h-52 sm:w-56 sm:h-56 shrink-0 select-none">
-      {slices.map((s, idx) => {
-        const val = Math.max(0, s.value);
-        if (val === 0) return null;
-        const sliceDeg = (val / total) * 360;
-        const startDeg = cumDeg;
-        cumDeg += sliceDeg;
-
-        const pct = Math.round((val / total) * 100);
+      {computedSlices.map((s, idx) => {
+        const { startDeg, sliceDeg, pct } = s;
         const midRad = ((startDeg + sliceDeg / 2 - 90) * Math.PI) / 180;
         const lx = CX + 56 * Math.cos(midRad);
         const ly = CY + 56 * Math.sin(midRad);
@@ -197,7 +230,7 @@ function PieSvg({
             <path
               d={`M ${CX} ${CY} L ${x1.toFixed(1)} ${y1.toFixed(1)} A ${R} ${R} 0 ${largeArc} 1 ${x2.toFixed(1)} ${y2.toFixed(1)} Z`}
               fill={s.color}
-              stroke="#ffffff"
+              stroke="var(--surface-card, #ffffff)"
               strokeWidth={2}
             />
             {textLabel && (
@@ -223,9 +256,23 @@ export default function DiagramsSim({ onResult }: Props) {
   const [mode, setMode] = useState<'explore' | 'trainer'>('explore');
   const [items, setItems] = useState<SliceItem[]>(() => buildPreset(0));
 
-  const [task, setTask] = useState<DiagramTask>(() => makeDiagramTask());
+  const [task, setTask] = useState<DiagramTask>(INITIAL_DIAGRAM_TASK);
   const [input, setInput] = useState('');
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearPendingTimer() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => clearPendingTimer();
+  }, []);
 
   const total = items.reduce((sum, item) => sum + Math.max(0, item.value), 0);
   const maxVal = Math.max(1, ...items.map((i) => i.value));
@@ -255,6 +302,7 @@ export default function DiagramsSim({ onResult }: Props) {
   }
 
   function nextTask() {
+    clearPendingTimer();
     setTask(makeDiagramTask());
     setInput('');
     setFeedback(null);
@@ -262,6 +310,7 @@ export default function DiagramsSim({ onResult }: Props) {
 
   function handleCheck(e: React.FormEvent) {
     e.preventDefault();
+    clearPendingTimer();
     const cleaned = input.trim().replace(/[°%\s]/g, '').replace(',', '.');
     const val = Number(cleaned);
     if (!cleaned || Number.isNaN(val)) return;
@@ -275,7 +324,7 @@ export default function DiagramsSim({ onResult }: Props) {
         ok: true,
         text: `✓ Точно! Ответ: ${task.answer}${unit}.`,
       });
-      setTimeout(nextTask, 1300);
+      timerRef.current = setTimeout(nextTask, 1300);
     } else {
       let hint = '';
       if (task.kind === 'angle_from_percent') {
@@ -296,7 +345,10 @@ export default function DiagramsSim({ onResult }: Props) {
         <div className="inline-flex p-1 bg-white rounded-xl border border-slate-200">
           <button
             type="button"
-            onClick={() => setMode('explore')}
+            onClick={() => {
+              clearPendingTimer();
+              setMode('explore');
+            }}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
               mode === 'explore' ? 'bg-indigo-600 text-white' : 'text-slate-600'
             }`}
@@ -501,7 +553,11 @@ export default function DiagramsSim({ onResult }: Props) {
                   firstLabel={`${task.percent}%`}
                   slices={[
                     { label: 'Сектор', value: task.percent, color: '#4F46E5' },
-                    { label: 'Остальное', value: 100 - task.percent, color: '#E2E8F0' },
+                    {
+                      label: 'Остальное',
+                      value: 100 - task.percent,
+                      color: 'rgba(148, 163, 184, 0.25)',
+                    },
                   ]}
                 />
               )}
@@ -511,7 +567,11 @@ export default function DiagramsSim({ onResult }: Props) {
                   firstLabel={`${task.angle}°`}
                   slices={[
                     { label: 'Сектор', value: task.angle, color: '#10B981' },
-                    { label: 'Остальное', value: 360 - task.angle, color: '#E2E8F0' },
+                    {
+                      label: 'Остальное',
+                      value: 360 - task.angle,
+                      color: 'rgba(148, 163, 184, 0.25)',
+                    },
                   ]}
                 />
               )}
@@ -585,6 +645,7 @@ export default function DiagramsSim({ onResult }: Props) {
 
               <form onSubmit={handleCheck} className="flex gap-2">
                 <input
+                  ref={inputRef}
                   type="text"
                   autoComplete="off"
                   value={input}
@@ -601,6 +662,14 @@ export default function DiagramsSim({ onResult }: Props) {
                   Проверить
                 </button>
               </form>
+
+              <MathKeypad
+                value={input}
+                onChange={setInput}
+                inputRef={inputRef}
+                symbols={DIAGRAM_KEYS}
+                align="left"
+              />
 
               {feedback && (
                 <div

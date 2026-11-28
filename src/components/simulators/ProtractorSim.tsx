@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { randInt } from '@/lib/math/utils';
 
 interface Props {
@@ -24,13 +24,27 @@ function getAngleType(deg: number) {
 
 export default function ProtractorSim({ onResult }: Props) {
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [angle, setAngle] = useState(60);
   const [taskMode, setTaskMode] = useState(false);
   const [targetAngle, setTargetAngle] = useState(120);
   const [dragging, setDragging] = useState(false);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
+  function clearPendingTimer() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => clearPendingTimer();
+  }, []);
+
   function nextTask() {
+    clearPendingTimer();
     setTargetAngle(TARGET_PRESETS[randInt(0, TARGET_PRESETS.length - 1)]);
     setFeedback(null);
   }
@@ -48,6 +62,7 @@ export default function ProtractorSim({ onResult }: Props) {
   }
 
   function checkAngle() {
+    clearPendingTimer();
     const ok = Math.abs(angle - targetAngle) <= 3;
     onResult(ok);
     if (ok) {
@@ -55,7 +70,7 @@ export default function ProtractorSim({ onResult }: Props) {
         ok: true,
         text: `✓ Точно в цель! Ты построил ${angle}° (цель ${targetAngle}°).`,
       });
-      setTimeout(nextTask, 1400);
+      timerRef.current = setTimeout(nextTask, 1400);
     } else {
       setFeedback({
         ok: false,
@@ -84,7 +99,10 @@ export default function ProtractorSim({ onResult }: Props) {
         <div className="inline-flex p-1 bg-white rounded-xl border border-slate-200">
           <button
             type="button"
-            onClick={() => setTaskMode(false)}
+            onClick={() => {
+              clearPendingTimer();
+              setTaskMode(false);
+            }}
             className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
               !taskMode ? 'bg-indigo-600 text-white' : 'text-slate-600'
             }`}
@@ -130,44 +148,83 @@ export default function ProtractorSim({ onResult }: Props) {
             onPointerUp={() => setDragging(false)}
             onPointerCancel={() => setDragging(false)}
           >
-            <path d={`M ${CX - R} ${CY} A ${R} ${R} 0 0 1 ${CX + R} ${CY} Z`} fill="#F8FAFC" stroke="#CBD5E1" strokeWidth={2} />
-            <circle cx={CX} cy={CY} r={R} fill="none" stroke="#E2E8F0" strokeWidth={1} strokeDasharray="4 4" />
+            <path
+              d={`M ${CX - R} ${CY} A ${R} ${R} 0 0 1 ${CX + R} ${CY} Z`}
+              fill="rgba(148, 163, 184, 0.12)"
+              stroke="rgba(148, 163, 184, 0.45)"
+              strokeWidth={2}
+            />
+            <circle
+              cx={CX}
+              cy={CY}
+              r={R}
+              fill="none"
+              stroke="rgba(148, 163, 184, 0.3)"
+              strokeWidth={1}
+              strokeDasharray="4 4"
+            />
 
-            {Array.from({ length: 37 }, (_, i) => i * 5).map((d) => {
-              const tRad = (-d * Math.PI) / 180;
-              const major = d % 10 === 0;
-              const inner = major ? R - 14 : R - 8;
-              return (
-                <g key={d}>
-                  <line
-                    x1={CX + inner * Math.cos(tRad)}
-                    y1={CY + inner * Math.sin(tRad)}
-                    x2={CX + R * Math.cos(tRad)}
-                    y2={CY + R * Math.sin(tRad)}
-                    stroke="#64748B"
-                    strokeWidth={major ? 1.5 : 0.8}
-                  />
-                  {d % 30 === 0 && (
-                    <text
-                      x={CX + (R - 27) * Math.cos(tRad)}
-                      y={CY + (R - 27) * Math.sin(tRad) + 4}
-                      textAnchor="middle"
-                      fontSize={11}
-                      fontWeight={700}
-                      fill="#475569"
-                    >
-                      {d}°
-                    </text>
-                  )}
-                </g>
-              );
-            })}
+            <g className="text-slate-500">
+              {Array.from({ length: 37 }, (_, i) => i * 5).map((d) => {
+                const tRad = (-d * Math.PI) / 180;
+                const major = d % 10 === 0;
+                const inner = major ? R - 14 : R - 8;
+                return (
+                  <g key={d}>
+                    <line
+                      x1={CX + inner * Math.cos(tRad)}
+                      y1={CY + inner * Math.sin(tRad)}
+                      x2={CX + R * Math.cos(tRad)}
+                      y2={CY + R * Math.sin(tRad)}
+                      stroke="currentColor"
+                      strokeWidth={major ? 1.5 : 0.8}
+                    />
+                    {d % 30 === 0 && (
+                      <text
+                        x={CX + (R - 27) * Math.cos(tRad)}
+                        y={CY + (R - 27) * Math.sin(tRad) + 4}
+                        textAnchor="middle"
+                        fontSize={11}
+                        fontWeight={700}
+                        fill="currentColor"
+                      >
+                        {d}°
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+            </g>
 
-            <path d={arcPath} fill="#6366F1" fillOpacity={0.22} stroke="#4F46E5" strokeWidth={1.5} />
-            <line x1={CX} y1={CY} x2={CX + R + 10} y2={CY} stroke="#0F172A" strokeWidth={3} strokeLinecap="round" />
-            <line x1={CX} y1={CY} x2={x2} y2={y2} stroke="#4F46E5" strokeWidth={3.5} strokeLinecap="round" />
-            <circle cx={x2} cy={y2} r={10} fill="#4F46E5" stroke="#ffffff" strokeWidth={3} />
-            <circle cx={CX} cy={CY} r={5} fill="#0F172A" />
+            <path
+              d={arcPath}
+              fill="#6366F1"
+              fillOpacity={0.25}
+              stroke="#6366F1"
+              strokeWidth={1.5}
+            />
+            <g className="text-slate-800">
+              <line
+                x1={CX}
+                y1={CY}
+                x2={CX + R + 10}
+                y2={CY}
+                stroke="currentColor"
+                strokeWidth={3}
+                strokeLinecap="round"
+              />
+              <circle cx={CX} cy={CY} r={5} fill="currentColor" />
+            </g>
+            <line
+              x1={CX}
+              y1={CY}
+              x2={x2}
+              y2={y2}
+              stroke="#6366F1"
+              strokeWidth={3.5}
+              strokeLinecap="round"
+            />
+            <circle cx={x2} cy={y2} r={10} fill="#6366F1" stroke="#ffffff" strokeWidth={3} />
           </svg>
         </div>
 
@@ -224,7 +281,11 @@ export default function ProtractorSim({ onResult }: Props) {
           ) : (
             <div className="space-y-2.5">
               {feedback && (
-                <div className={`text-xs sm:text-sm font-semibold text-center ${feedback.ok ? 'text-emerald-600' : 'text-rose-600'}`}>
+                <div
+                  className={`text-xs sm:text-sm font-semibold text-center ${
+                    feedback.ok ? 'text-emerald-600' : 'text-rose-600'
+                  }`}
+                >
                   {feedback.text}
                 </div>
               )}

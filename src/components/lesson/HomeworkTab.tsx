@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import MathMarkdown from './MathMarkdown';
+import MathKeypad, { type KeypadKey } from '@/components/ui/MathKeypad';
 import { playSound } from '@/lib/audio/sound';
 import { compressImageFile } from '@/lib/media/compressImage';
 import type { HomeworkTask, Profile, Submission, Topic } from '@/types/db';
@@ -30,6 +31,100 @@ const DIFF_META: Record<HomeworkTask['difficulty'], { label: string; cls: string
   pro: { label: 'Профи', cls: 'bg-purple-50 text-purple-700 border-purple-200' },
 };
 
+const HOMEWORK_KEYS: KeypadKey[] = [
+  { label: ',', value: ',', title: 'Десятичная запятая' },
+  { label: '/', value: '/', title: 'Черта дроби (например 3/4)' },
+  { label: '−', value: '-', title: 'Минус' },
+  { label: '%', value: '%', title: 'Проценты' },
+  { label: '°', value: '°', title: 'Градусы' },
+];
+
+function getDraftStorageKey(userId: string | undefined, topicId: string): string {
+  return `mathhub_hw_drafts_${userId || 'guest'}_${topicId}`;
+}
+
+function readLocalDrafts(storageKey: string): Record<string, string> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const result: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof v === 'string') result[k] = v;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function writeLocalDrafts(storageKey: string, drafts: Record<string, string>): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (Object.keys(drafts).length === 0) {
+      window.localStorage.removeItem(storageKey);
+    } else {
+      window.localStorage.setItem(storageKey, JSON.stringify(drafts));
+    }
+  } catch {
+    // Игнорируем ограничения приватного режима или переполнение квоты
+  }
+}
+
+function HomeworkShortInput({
+  value,
+  busy,
+  onChange,
+  onSubmit,
+}: {
+  value: string;
+  busy: boolean;
+  onChange: (next: string) => void;
+  onSubmit: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  return (
+    <div className="space-y-2.5">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSubmit();
+        }}
+        className="flex flex-col sm:flex-row gap-2 max-w-md"
+      >
+        <input
+          ref={inputRef}
+          type="text"
+          autoComplete="off"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Введи ответ (напр. 42 или 3/4)..."
+          className="flex-1 px-4 py-2.5 text-sm font-semibold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-indigo-500"
+        />
+        <button
+          type="submit"
+          disabled={busy}
+          className="btn-tactile px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
+        >
+          {busy ? 'Проверка...' : 'Проверить'}
+        </button>
+      </form>
+
+      <MathKeypad
+        value={value}
+        onChange={onChange}
+        inputRef={inputRef}
+        symbols={HOMEWORK_KEYS}
+        disabled={busy}
+        align="left"
+      />
+    </div>
+  );
+}
+
 export default function HomeworkTab({
   topic,
   canEdit,
@@ -37,11 +132,13 @@ export default function HomeworkTab({
   onHomeworkSubmitted,
 }: Props) {
   const supabase = createClient();
+  const draftStorageKey = getDraftStorageKey(profile?.id, topic.id);
 
   const [tasks, setTasks] = useState<HomeworkTask[]>([]);
   const [submissions, setSubmissions] = useState<Record<string, Submission>>({});
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [draftAnswers, setDraftAnswers] = useState<Record<string, string>>({});
+  const [unsavedDrafts, setUnsavedDrafts] = useState<Record<string, string>>({});
   const [hints, setHints] = useState<Record<string, string>>({});
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,11 +163,11 @@ export default function HomeworkTab({
 
   useEffect(() => {
     let cancelled = false;
-    setAiDrafts([]);
-    setAiError('');
 
     async function load() {
       setLoading(true);
+      setAiDrafts([]);
+      setAiError('');
       try {
         const { data: taskRows } = await supabase
           .from('homework_tasks')
@@ -83,6 +180,12 @@ export default function HomeworkTab({
         setTasks(loadedTasks);
         setHints({});
 
+        const validTaskIds = new Set(loadedTasks.map((t) => t.id));
+        const savedLocal = readLocalDrafts(draftStorageKey);
+        const subMap: Record<string, Submission> = {};
+        const mergedDrafts: Record<string, string> = {};
+        const signedMap: Record<string, string> = {};
+
         if (profile && loadedTasks.length > 0) {
           const { data: subRows } = await supabase
             .from('submissions')
@@ -94,13 +197,10 @@ export default function HomeworkTab({
             );
 
           if (cancelled) return;
-          const subMap: Record<string, Submission> = {};
-          const drafts: Record<string, string> = {};
-          const signedMap: Record<string, string> = {};
 
           for (const sub of (subRows as Submission[]) || []) {
             subMap[sub.task_id] = sub;
-            drafts[sub.task_id] = sub.answer_text || '';
+            mergedDrafts[sub.task_id] = sub.answer_text || '';
             if (sub.photo_path) {
               const { data: signed } = await supabase.storage
                 .from('student-submissions')
@@ -108,16 +208,25 @@ export default function HomeworkTab({
               if (signed?.signedUrl) signedMap[sub.task_id] = signed.signedUrl;
             }
           }
+        }
 
-          if (!cancelled) {
-            setSubmissions(subMap);
-            setDraftAnswers(drafts);
-            setPhotoUrls(signedMap);
+        // Подтягиваем несохранённые локальные черновики поверх серверных ответов
+        const cleanedLocal: Record<string, string> = {};
+        for (const [taskId, localVal] of Object.entries(savedLocal)) {
+          if (!validTaskIds.has(taskId)) continue;
+          const serverVal = subMap[taskId]?.answer_text || '';
+          if (localVal !== serverVal) {
+            mergedDrafts[taskId] = localVal;
+            cleanedLocal[taskId] = localVal;
           }
-        } else {
-          setSubmissions({});
-          setDraftAnswers({});
-          setPhotoUrls({});
+        }
+        writeLocalDrafts(draftStorageKey, cleanedLocal);
+
+        if (!cancelled) {
+          setSubmissions(subMap);
+          setDraftAnswers(mergedDrafts);
+          setUnsavedDrafts(cleanedLocal);
+          setPhotoUrls(signedMap);
         }
       } catch (err) {
         console.error('Homework load error:', err);
@@ -130,7 +239,32 @@ export default function HomeworkTab({
     return () => {
       cancelled = true;
     };
-  }, [topic.id, profile?.id]);
+  }, [topic.id, profile?.id, draftStorageKey]);
+
+  function handleDraftChange(taskId: string, nextValue: string) {
+    setDraftAnswers((prev) => ({ ...prev, [taskId]: nextValue }));
+    setUnsavedDrafts((prev) => {
+      const serverVal = submissions[taskId]?.answer_text || '';
+      const next = { ...prev };
+      if (nextValue === serverVal) {
+        delete next[taskId];
+      } else {
+        next[taskId] = nextValue;
+      }
+      writeLocalDrafts(draftStorageKey, next);
+      return next;
+    });
+  }
+
+  function clearLocalDraft(taskId: string) {
+    setUnsavedDrafts((prev) => {
+      if (!(taskId in prev)) return prev;
+      const next = { ...prev };
+      delete next[taskId];
+      writeLocalDrafts(draftStorageKey, next);
+      return next;
+    });
+  }
 
   async function submitAnswer(taskId: string, answerText: string, photoPath?: string | null) {
     if (!profile) {
@@ -162,6 +296,7 @@ export default function HomeworkTab({
       const nextSubmissions = { ...submissions, [taskId]: sub };
       setSubmissions(nextSubmissions);
       setDraftAnswers((prev) => ({ ...prev, [taskId]: sub.answer_text || '' }));
+      clearLocalDraft(taskId);
 
       // Зажигаем звезду ДЗ, когда все задания урока выполнены
       const allCompleted =
@@ -373,6 +508,7 @@ export default function HomeworkTab({
     const { error } = await supabase.from('homework_tasks').delete().eq('id', taskId);
     if (!error) {
       setTasks((prev) => prev.filter((t) => t.id !== taskId));
+      clearLocalDraft(taskId);
     }
   }
 
@@ -399,7 +535,7 @@ export default function HomeworkTab({
             Домашние задания к уроку
           </h3>
           <p className="text-xs text-slate-500">
-            Тесты и краткие ответы проверяются мгновенно; к открытым задачам можно прикрепить фото тетради.
+            Тесты и краткие ответы проверяются мгновенно; черновики сохраняются автоматически.
           </p>
         </div>
         {tasks.length > 0 && (
@@ -428,6 +564,7 @@ export default function HomeworkTab({
             const sub = submissions[hw.id];
             const diff = DIFF_META[hw.difficulty] || DIFF_META.standard;
             const busy = busyTaskId === hw.id;
+            const hasLocalDraft = hw.id in unsavedDrafts;
             const typeLabel =
               hw.type === 'test'
                 ? 'Тест'
@@ -451,6 +588,14 @@ export default function HomeworkTab({
                     <span className="text-[11px] font-semibold text-slate-500">
                       {typeLabel} · {hw.points} б.
                     </span>
+                    {hasLocalDraft && (
+                      <span
+                        className="px-2 py-0.5 rounded-lg bg-sky-50 border border-sky-200 text-sky-700 text-[10px] font-bold"
+                        title="Введённый текст сохранён в браузере и не пропадёт при обновлении страницы"
+                      >
+                        💾 Черновик сохранён
+                      </span>
+                    )}
                   </div>
                   {canEdit && (
                     <button
@@ -505,70 +650,15 @@ export default function HomeworkTab({
                   </div>
                 )}
 
-                {/* Краткий ответ */}
+                {/* Краткий ответ с умной мат-клавиатурой и автосохранением */}
                 {hw.type === 'input' && (
                   <div className="space-y-2.5">
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        submitAnswer(hw.id, draftAnswers[hw.id] || '');
-                      }}
-                      className="flex flex-col sm:flex-row gap-2 max-w-md"
-                    >
-                      <input
-                        type="text"
-                        value={draftAnswers[hw.id] ?? ''}
-                        onChange={(e) =>
-                          setDraftAnswers((prev) => ({
-                            ...prev,
-                            [hw.id]: e.target.value,
-                          }))
-                        }
-                        placeholder="Введи ответ (напр. 42 или 3/4)..."
-                        className="flex-1 px-4 py-2.5 text-sm font-semibold bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:border-indigo-500"
-                      />
-                      <button
-                        type="submit"
-                        disabled={busy}
-                        className="btn-tactile px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 disabled:opacity-60 text-white text-xs sm:text-sm font-bold transition"
-                      >
-                        {busy ? 'Проверка...' : 'Проверить'}
-                      </button>
-                    </form>
-
-                    {/* Быстрая математическая клавиатура для телефона */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {(['/', ',', '-'] as const).map((sym) => (
-                        <button
-                          key={sym}
-                          type="button"
-                          onClick={() => {
-                            playSound('click');
-                            setDraftAnswers((prev) => ({
-                              ...prev,
-                              [hw.id]: (prev[hw.id] ?? '') + sym,
-                            }));
-                          }}
-                          className="w-9 h-8 rounded-lg bg-slate-100 hover:bg-indigo-100 text-slate-800 font-extrabold text-sm transition"
-                        >
-                          {sym === '-' ? '−' : sym}
-                        </button>
-                      ))}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          playSound('click');
-                          setDraftAnswers((prev) => ({
-                            ...prev,
-                            [hw.id]: (prev[hw.id] ?? '').slice(0, -1),
-                          }));
-                        }}
-                        className="px-2.5 h-8 rounded-lg bg-slate-100 hover:bg-rose-100 text-slate-700 font-bold text-xs transition"
-                        title="Стереть символ"
-                      >
-                        ⌫
-                      </button>
-                    </div>
+                    <HomeworkShortInput
+                      value={draftAnswers[hw.id] ?? ''}
+                      busy={busy}
+                      onChange={(next) => handleDraftChange(hw.id, next)}
+                      onSubmit={() => submitAnswer(hw.id, draftAnswers[hw.id] || '')}
+                    />
 
                     {sub?.status === 'checked' && (
                       <div
@@ -590,18 +680,13 @@ export default function HomeworkTab({
                   </div>
                 )}
 
-                {/* Развёрнутое решение */}
+                {/* Развёрнутое решение с автосохранением текста */}
                 {hw.type === 'open' && (
                   <div className="space-y-3">
                     <textarea
                       rows={3}
                       value={draftAnswers[hw.id] ?? ''}
-                      onChange={(e) =>
-                        setDraftAnswers((prev) => ({
-                          ...prev,
-                          [hw.id]: e.target.value,
-                        }))
-                      }
+                      onChange={(e) => handleDraftChange(hw.id, e.target.value)}
                       placeholder="Напиши ход решения здесь (или прикрепи фото тетради)..."
                       className="w-full p-3.5 text-sm bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:border-indigo-500"
                     />

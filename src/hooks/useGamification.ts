@@ -14,9 +14,14 @@ export function useGamification(enabled = true) {
   const [stats, setStats] = useState<StudentGamificationStats | null>(null);
   const [starsMap, setStarsMap] = useState<Record<string, TopicStarProgress>>({});
   const [rewardBanner, setRewardBanner] = useState<string | null>(null);
-  const [loading, setLoading] = useState(enabled);
+  const [loaded, setLoaded] = useState(false);
 
   const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const starsMapRef = useRef<Record<string, TopicStarProgress>>({});
+
+  useEffect(() => {
+    starsMapRef.current = starsMap;
+  }, [starsMap]);
 
   const showBanner = useCallback((message: string) => {
     setRewardBanner(message);
@@ -33,10 +38,7 @@ export function useGamification(enabled = true) {
   }, []);
 
   useEffect(() => {
-    if (!enabled) {
-      setLoading(false);
-      return;
-    }
+    if (!enabled) return;
 
     let cancelled = false;
 
@@ -53,7 +55,7 @@ export function useGamification(enabled = true) {
       } catch (err) {
         console.error('load gamification error:', err);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setLoaded(true);
       }
     }
 
@@ -71,8 +73,7 @@ export function useGamification(enabled = true) {
     ) => {
       if (!enabled || !topicId) return;
 
-      // Не шлём лишний запрос, если звезда за слайды или ДЗ уже зажжена
-      const current = starsMap[topicId];
+      const current = starsMapRef.current[topicId];
       if (action === 'slides_done' && current?.slides_done) return;
       if (action === 'homework_done' && current?.homework_done) return;
 
@@ -121,7 +122,7 @@ export function useGamification(enabled = true) {
         console.error('recordAction error:', err);
       }
     },
-    [enabled, starsMap, showBanner]
+    [enabled, showBanner]
   );
 
   const markSlidesDone = useCallback(
@@ -130,8 +131,12 @@ export function useGamification(enabled = true) {
   );
 
   const reportPracticeSolved = useCallback(
-    (topicId: string, solvedDelta = 1) =>
-      recordAction(topicId, 'practice_solved', { solvedDelta }),
+    (topicId: string, solvedTotal?: number) =>
+      recordAction(
+        topicId,
+        'practice_solved',
+        solvedTotal !== undefined ? { solvedTotal } : { solvedDelta: 1 }
+      ),
     [recordAction]
   );
 
@@ -144,7 +149,7 @@ export function useGamification(enabled = true) {
     stats,
     starsMap,
     rewardBanner,
-    loading,
+    loading: enabled && !loaded,
     markSlidesDone,
     reportPracticeSolved,
     markHomeworkDone,

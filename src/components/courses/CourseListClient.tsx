@@ -22,6 +22,9 @@ export interface MapTopicItem {
   simSolved: number;
   hwTotal: number;
   hwDone: number;
+  slidesDone?: boolean;
+  practiceDone?: boolean;
+  homeworkDone?: boolean;
   scheduleBadge: 'today' | 'tomorrow' | null;
 }
 
@@ -76,10 +79,10 @@ function getTopicStars(t: MapTopicItem): {
   earned: number;
   possible: number;
 } {
-  const theoryStar = t.completed;
-  const simStar = t.simSolved >= 3;
+  const theoryStar = Boolean(t.slidesDone || t.completed);
+  const simStar = Boolean(t.practiceDone || t.simSolved >= 3);
   const hasHw = t.hwTotal > 0;
-  const hwStar = hasHw && t.hwDone >= t.hwTotal;
+  const hwStar = hasHw && (Boolean(t.homeworkDone) || t.hwDone >= t.hwTotal);
   const possible = hasHw ? 3 : 2;
   const earned = (theoryStar ? 1 : 0) + (simStar ? 1 : 0) + (hwStar ? 1 : 0);
   return { theoryStar, simStar, hwStar, earned, possible };

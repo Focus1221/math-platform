@@ -51,7 +51,8 @@ export async function POST(request: Request) {
       .eq('topic_id', topic.id)
       .maybeSingle();
 
-    const nextCorrect = Number(existing?.sim_correct_count || 0) + (isCorrect ? 1 : 0);
+    const nextCorrect =
+      Number(existing?.sim_correct_count || 0) + (isCorrect ? 1 : 0);
     const nextStreak = isCorrect ? Number(existing?.sim_streak || 0) + 1 : 0;
 
     const { error } = await admin.from('topic_progress').upsert({
@@ -67,9 +68,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, nextCorrect, nextStreak });
+    return NextResponse.json({
+      ok: true,
+      topicId: topic.id,
+      nextCorrect,
+      nextStreak,
+    });
   } catch (err) {
     console.error('simulators/progress error:', err);
-    return NextResponse.json({ error: 'Ошибка сохранения прогресса' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Ошибка сохранения прогресса' },
+      { status: 500 }
+    );
   }
 }

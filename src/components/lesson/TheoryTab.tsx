@@ -41,6 +41,11 @@ const KIND_META: Record<string, { label: string; icon: string; cls: string }> = 
   },
 };
 
+function buildMaterialStoragePath(topicId: string, fileName: string): string {
+  const ext = fileName.split('.').pop() || 'bin';
+  return `${topicId}/${Date.now()}.${ext}`;
+}
+
 export default function TheoryTab({
   topic,
   materials,
@@ -105,8 +110,7 @@ export default function TheoryTab({
     let finalUrl: string | null = url.trim() || null;
 
     if (file) {
-      const ext = file.name.split('.').pop() || 'bin';
-      const safePath = `${topic.id}/${Date.now()}.${ext}`;
+      const safePath = buildMaterialStoragePath(topic.id, file.name);
       const { error: upErr } = await supabase.storage
         .from('lesson-materials')
         .upload(safePath, file);

@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { connection } from 'next/server';
 import { createServerSupabase } from '@/lib/supabase/server';
+import { createAdminSupabase } from '@/lib/supabase/admin';
 import CourseListClient, {
   type MapTopicItem,
 } from '@/components/courses/CourseListClient';
@@ -60,15 +61,25 @@ async function CoursesContent() {
     tasksByTopic.set(t.topic_id, list);
   }
 
-  // Прогресс, сданные ДЗ и расписание пользователя
+  // Прогресс, звёзды, сданные ДЗ и расписание пользователя
   const progressMap = new Map<
     string,
     { completed: boolean; simSolved: number }
+  >();
+  const starsMap = new Map<
+    string,
+    {
+      slidesDone: boolean;
+      practiceDone: boolean;
+      practiceSolved: number;
+      homeworkDone: boolean;
+    }
   >();
   const doneTaskIds = new Set<string>();
   const scheduleBadgeMap = new Map<string, 'today' | 'tomorrow'>();
 
   if (user) {
+    const admin = createAdminSupabase();
     const isTeacher = profile?.role === 'teacher';
     let schQuery = supabase
       .from('class_schedule')
@@ -78,23 +89,42 @@ async function CoursesContent() {
       schQuery = schQuery.eq('classroom_id', profile.classroom_id);
     }
 
-    const [{ data: progRows }, { data: subRows }, { data: schRows }] =
-      await Promise.all([
-        supabase
-          .from('topic_progress')
-          .select('topic_id, completed, sim_correct_count')
-          .eq('student_id', user.id),
-        supabase
-          .from('submissions')
-          .select('task_id')
-          .eq('student_id', user.id),
-        isTeacher || profile?.classroom_id ? schQuery : Promise.resolve({ data: [] }),
-      ]);
+    const [
+      { data: progRows },
+      { data: subRows },
+      { data: schRows },
+      { data: starRows },
+    ] = await Promise.all([
+      supabase
+        .from('topic_progress')
+        .select('topic_id, completed, sim_correct_count')
+        .eq('student_id', user.id),
+      supabase
+        .from('submissions')
+        .select('task_id')
+        .eq('student_id', user.id),
+      isTeacher || profile?.classroom_id
+        ? schQuery
+        : Promise.resolve({ data: [] }),
+      admin
+        .from('lesson_stars')
+        .select('topic_id, slides_done, practice_done, practice_solved, homework_done')
+        .eq('user_id', user.id),
+    ]);
 
     for (const p of progRows || []) {
       progressMap.set(p.topic_id, {
         completed: Boolean(p.completed),
         simSolved: Number(p.sim_correct_count || 0),
+      });
+    }
+
+    for (const st of starRows || []) {
+      starsMap.set(String(st.topic_id), {
+        slidesDone: Boolean(st.slides_done),
+        practiceDone: Boolean(st.practice_done),
+        practiceSolved: Number(st.practice_solved || 0),
+        homeworkDone: Boolean(st.homework_done),
       });
     }
 
@@ -116,6 +146,7 @@ async function CoursesContent() {
 
   const mapTopics: MapTopicItem[] = rawTopics.map((t) => {
     const prog = progressMap.get(t.id);
+    const star = starsMap.get(t.id);
     const topicTaskIds = tasksByTopic.get(t.id) || [];
     const doneTasks = topicTaskIds.filter((id) => doneTaskIds.has(id)).length;
 
@@ -130,9 +161,12 @@ async function CoursesContent() {
       is_assessment: Boolean(t.is_assessment),
       sim_type: t.sim_type || 'arithmetic',
       completed: Boolean(prog?.completed),
-      simSolved: prog?.simSolved || 0,
+      simSolved: Math.max(prog?.simSolved || 0, star?.practiceSolved || 0),
       hwTotal: topicTaskIds.length,
       hwDone: doneTasks,
+      slidesDone: Boolean(star?.slidesDone),
+      practiceDone: Boolean(star?.practiceDone),
+      homeworkDone: Boolean(star?.homeworkDone),
       scheduleBadge: scheduleBadgeMap.get(t.id) || null,
     };
   });

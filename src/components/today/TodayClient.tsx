@@ -1,8 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import Link from 'next/link';
 import AppNav from '@/components/layout/AppNav';
+import GamificationHeader from '@/components/gamification/GamificationHeader';
+import { useGamification } from '@/hooks/useGamification';
 import { cleanSectionName, formatShortRuDate } from '@/lib/format/cleanTopic';
 import type { Course, Profile } from '@/types/db';
 
@@ -44,6 +46,18 @@ interface ClassroomOption {
   join_code: string;
 }
 
+interface LastLessonSnapshot {
+  courseId: string;
+  courseTitle: string;
+  pathname: string;
+  topicId: string;
+  topicTitle: string;
+  orderIndex: number;
+  quarter: number;
+  tab: 'theory' | 'interactive' | 'homework';
+  updatedAt: number;
+}
+
 interface Props {
   profile: Profile | null;
   studentClassroom: ClassroomOption | null;
@@ -60,12 +74,68 @@ interface Props {
   tomorrowIso: string;
 }
 
+const LAST_LESSON_STORAGE_KEY = 'mathhub_last_lesson';
+
+const TAB_LABELS: Record<LastLessonSnapshot['tab'], string> = {
+  theory: '📘 Слайды и конспект',
+  interactive: '🎮 Тренажёр',
+  homework: '📝 Домашнее задание',
+};
+
 const QUICK_SIMS = [
   { id: 'fractions_visual', icon: '🍕', name: 'Пицца дробей', desc: 'Доли и сравнение' },
   { id: 'divisibility', icon: '⚡', name: 'Блиц: Делимость', desc: 'На 2, 3, 5, 9, 10' },
   { id: 'percent_grid', icon: '💯', name: 'Проценты 10×10', desc: 'Сетка и дроби' },
   { id: 'diagrams', icon: '📊', name: 'Диаграммы', desc: 'Круги и столбцы' },
 ];
+
+function subscribeLastLesson(callback: () => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  window.addEventListener('storage', callback);
+  return () => window.removeEventListener('storage', callback);
+}
+
+function readLastLessonRaw(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(LAST_LESSON_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function parseLastLesson(raw: string | null): LastLessonSnapshot | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<LastLessonSnapshot>;
+    if (
+      !parsed ||
+      typeof parsed.pathname !== 'string' ||
+      !parsed.pathname.startsWith('/courses/') ||
+      typeof parsed.topicId !== 'string' ||
+      typeof parsed.topicTitle !== 'string'
+    ) {
+      return null;
+    }
+    const safeTab: LastLessonSnapshot['tab'] =
+      parsed.tab === 'interactive' || parsed.tab === 'homework'
+        ? parsed.tab
+        : 'theory';
+    return {
+      courseId: parsed.courseId || '',
+      courseTitle: parsed.courseTitle || 'Курс математики',
+      pathname: parsed.pathname,
+      topicId: parsed.topicId,
+      topicTitle: parsed.topicTitle,
+      orderIndex: Number(parsed.orderIndex) || 1,
+      quarter: Number(parsed.quarter) || 1,
+      tab: safeTab,
+      updatedAt: Number(parsed.updatedAt) || 0,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export default function TodayClient({
   profile,
@@ -81,6 +151,17 @@ export default function TodayClient({
   const isTeacher = profile?.role === 'teacher';
   const [selectedClassId, setSelectedClassId] = useState<string>(
     teacherClassrooms[0]?.id || ''
+  );
+
+  const lastLessonRaw = useSyncExternalStore(
+    subscribeLastLesson,
+    readLastLessonRaw,
+    () => null
+  );
+  const lastLesson = useMemo(() => parseLastLesson(lastLessonRaw), [lastLessonRaw]);
+
+  const { stats: gamificationStats, rewardBanner } = useGamification(
+    Boolean(profile && !isTeacher)
   );
 
   const firstName = profile?.full_name?.trim().split(/\s+/)[0] || '';
@@ -119,6 +200,11 @@ export default function TodayClient({
         (a.hwDueDate || a.lessonDate).localeCompare(b.hwDueDate || b.lessonDate)
       );
   }, [filteredSchedules, todayIso]);
+
+  const showCompactResume =
+    Boolean(lastLesson) &&
+    todayLessons.length > 0 &&
+    !todayLessons.some((l) => l.topicId === lastLesson?.topicId);
 
   function getDueBadge(dueDate: string | null) {
     if (!dueDate) {
@@ -212,6 +298,11 @@ export default function TodayClient({
             )
           )}
         </section>
+
+        {/* Панель уровня, XP, стрика и наград */}
+        {profile && !isTeacher && (
+          <GamificationHeader stats={gamificationStats} rewardBanner={rewardBanner} />
+        )}
 
         {/* Если гость ещё не вошёл */}
         {!profile && (
@@ -317,29 +408,100 @@ export default function TodayClient({
                   </div>
                 </div>
               ))}
+
+              {/* Компактная полоска возврата, если недавно был открыт другой урок */}
+              {showCompactResume && lastLesson && (
+                <div className="bg-white rounded-2xl border border-slate-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="px-2.5 py-1 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-extrabold shrink-0">
+                      ↩ Продолжить
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-xs sm:text-sm font-extrabold text-slate-900 truncate">
+                        {lastLesson.orderIndex}. {lastLesson.topicTitle}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {lastLesson.courseTitle} · {TAB_LABELS[lastLesson.tab]}
+                      </div>
+                    </div>
+                  </div>
+                  <Link
+                    href={`${lastLesson.pathname}?topic=${lastLesson.topicId}&tab=${lastLesson.tab}`}
+                    prefetch={false}
+                    className="px-3.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-extrabold transition shrink-0"
+                  >
+                    Вернуться →
+                  </Link>
+                </div>
+              )}
             </div>
           ) : (
-            <div className="bg-white rounded-3xl border border-slate-200 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <div className="text-base font-extrabold text-slate-900">
-                  {isTeacher
-                    ? 'На сегодня для этого класса урок ещё не закреплён'
-                    : 'На сегодня особых назначений нет'}
+            <div className="space-y-3">
+              {/* Если есть недавно открытый урок — показываем карточку быстрого продолжения */}
+              {lastLesson ? (
+                <div className="bg-white rounded-3xl border-2 border-indigo-200 shadow-xs p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 animate-pop">
+                  <div className="space-y-2 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-extrabold">
+                        ↩ Продолжить урок
+                      </span>
+                      <span className="font-bold text-slate-500">
+                        {lastLesson.courseTitle} · {lastLesson.quarter} четверть
+                      </span>
+                      <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 font-bold">
+                        {TAB_LABELS[lastLesson.tab]}
+                      </span>
+                    </div>
+                    <h3 className="text-lg sm:text-xl font-extrabold text-slate-900 leading-snug">
+                      {lastLesson.orderIndex}. {lastLesson.topicTitle}
+                    </h3>
+                    {isTeacher && (
+                      <p className="text-xs text-slate-500">
+                        На сегодня для этого класса урок ещё не закреплён — можешь назначить эту или любую другую тему через «📅 Назначить классу».
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <Link
+                      href={`${lastLesson.pathname}?topic=${lastLesson.topicId}&tab=${lastLesson.tab}`}
+                      prefetch={false}
+                      className="btn-tactile px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-xs sm:text-sm font-extrabold text-center"
+                    >
+                      Продолжить →
+                    </Link>
+                    <Link
+                      href="/courses"
+                      className="px-4 py-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-extrabold text-center transition"
+                    >
+                      Все темы
+                    </Link>
+                  </div>
                 </div>
-                <p className="text-xs sm:text-sm text-slate-500">
-                  {isTeacher
-                    ? 'Открой любую тему в курсе в режиме «Редактор» и нажми «📅 Назначить классу» — карточка сразу загорится здесь зелёным.'
-                    : 'Ты можешь открыть любую тему программы или потренироваться в симуляторах.'}
-                </p>
-              </div>
-              {defaultCourse && (
-                <Link
-                  href={`/courses/${defaultCourse.slug}`}
-                  prefetch={false}
-                  className="btn-tactile px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-xs sm:text-sm font-extrabold text-center shrink-0"
-                >
-                  Открыть {defaultCourse.title}
-                </Link>
+              ) : (
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="text-base font-extrabold text-slate-900">
+                      {isTeacher
+                        ? 'На сегодня для этого класса урок ещё не закреплён'
+                        : 'На сегодня особых назначений нет'}
+                    </div>
+                    <p className="text-xs sm:text-sm text-slate-500">
+                      {isTeacher
+                        ? 'Открой любую тему в курсе в режиме «Редактор» и нажми «📅 Назначить классу» — карточка сразу загорится здесь зелёным.'
+                        : 'Ты можешь открыть любую тему программы или потренироваться в симуляторах.'}
+                    </p>
+                  </div>
+                  {defaultCourse && (
+                    <Link
+                      href={`/courses/${defaultCourse.slug}`}
+                      prefetch={false}
+                      className="btn-tactile px-5 py-2.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 border-indigo-800 text-white text-xs sm:text-sm font-extrabold text-center shrink-0"
+                    >
+                      Открыть {defaultCourse.title}
+                    </Link>
+                  )}
+                </div>
               )}
             </div>
           )}

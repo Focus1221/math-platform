@@ -1,10 +1,12 @@
 'use client';
-import { useGamification } from '@/hooks/useGamification';
-import GamificationHeader from '@/components/gamification/GamificationHeader';
-import LessonStarsBar from '@/components/gamification/LessonStarsBar';
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { useGamification } from '@/hooks/useGamification';
+import { PRACTICE_STAR_TARGET } from '@/lib/gamification';
+import GamificationHeader from '@/components/gamification/GamificationHeader';
+import ThemePicker from '@/components/layout/ThemePicker';
 import TheoryTab from './TheoryTab';
 import InteractiveTab from './InteractiveTab';
 import HomeworkTab from './HomeworkTab';
@@ -15,13 +17,6 @@ import BoardDrawOverlay from './BoardDrawOverlay';
 import ConfettiBurst from '@/components/ui/ConfettiBurst';
 import { cleanSectionName, getScheduleBadge } from '@/lib/format/cleanTopic';
 import { isSoundEnabled, playSound, setSoundEnabled } from '@/lib/audio/sound';
-import {
-  applyTheme,
-  cycleTheme,
-  getSavedTheme,
-  THEME_OPTIONS,
-  type AppTheme,
-} from '@/lib/theme/theme';
 import type {
   ClassScheduleItem,
   Course,
@@ -49,6 +44,24 @@ interface Props {
 
 type TabId = 'theory' | 'interactive' | 'homework' | 'passport';
 
+const LAST_LESSON_STORAGE_KEY = 'mathhub_last_lesson';
+
+function syncLessonUrl(topicId: string, tab: TabId) {
+  if (typeof window === 'undefined' || !topicId) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set('topic', topicId);
+  if (tab === 'passport') {
+    url.searchParams.delete('tab');
+  } else {
+    url.searchParams.set('tab', tab);
+  }
+  const nextHref = `${url.pathname}${url.search}${url.hash}`;
+  const currentHref = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextHref !== currentHref) {
+    window.history.replaceState(null, '', nextHref);
+  }
+}
+
 export default function CourseWorkspace({
   course,
   initialTopics,
@@ -70,16 +83,17 @@ export default function CourseWorkspace({
   const [tutorOpen, setTutorOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
-  const [theme, setTheme] = useState<AppTheme>('bright');
   const [confettiKey, setConfettiKey] = useState(0);
-const {
-  stats,
-  starsMap,
-  rewardBanner,
-  markSlidesDone,
-  reportPracticeSolved,
-  markHomeworkDone,
-} = useGamification(true);
+
+  const {
+    stats,
+    starsMap,
+    rewardBanner,
+    markSlidesDone,
+    reportPracticeSolved,
+    markHomeworkDone,
+  } = useGamification(Boolean(profile));
+
   const initialMatchedTopic =
     initialTopics.find((t) => t.id === initialTopicId) ||
     initialTopics[0] ||
@@ -98,9 +112,8 @@ const {
     return 'theory';
   });
 
-  // Локальные звёзды текущего урока (за теорию и тренажёр)
+  // Локальная отметка пройденных слайдов (работает и для гостей)
   const [slidesDoneIds, setSlidesDoneIds] = useState<string[]>([]);
-  const [visitedPracticeIds, setVisitedPracticeIds] = useState<string[]>([]);
 
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'all' | 'assessment' | 'completed'>('all');
@@ -118,7 +131,6 @@ const {
 
   useEffect(() => {
     setSoundOn(isSoundEnabled());
-    setTheme(getSavedTheme());
 
     function handleClickOutside(e: MouseEvent) {
       if (
@@ -177,13 +189,6 @@ const {
     if (next) playSound('click');
   }
 
-  function handleCycleTheme() {
-    const next = cycleTheme(theme);
-    applyTheme(next);
-    setTheme(next);
-    playSound('click');
-  }
-
   const orderedTopics = useMemo(
     () => [...topics].sort((a, b) => a.order_index - b.order_index),
     [topics]
@@ -219,11 +224,45 @@ const {
     return map;
   }, [schedules]);
 
+  // Обновляем URL и запоминаем последний открытый урок для экрана «Сегодня»
+  useEffect(() => {
+    if (!activeTopic) return;
+    syncLessonUrl(activeTopic.id, activeTab);
+    try {
+      const safeTab = activeTab === 'passport' ? 'theory' : activeTab;
+      window.localStorage.setItem(
+        LAST_LESSON_STORAGE_KEY,
+        JSON.stringify({
+          courseId: course.id,
+          courseTitle: course.title,
+          pathname: window.location.pathname,
+          topicId: activeTopic.id,
+          topicTitle: activeTopic.title,
+          orderIndex: activeTopic.order_index,
+          quarter: activeTopic.quarter,
+          tab: safeTab,
+          updatedAt: Date.now(),
+        })
+      );
+    } catch {
+      // Игнорируем ограничения приватного режима
+    }
+  }, [
+    activeTopic?.id,
+    activeTopic?.title,
+    activeTopic?.order_index,
+    activeTopic?.quarter,
+    activeTab,
+    course.id,
+    course.title,
+  ]);
+
   function goToTopic(topic: Topic) {
     playSound('click');
     setActiveTopicId(topic.id);
     setActiveQuarter(topic.quarter);
     setActiveTab('theory');
+    syncLessonUrl(topic.id, 'theory');
     setDrawerOpen(false);
     setTutorOpen(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -232,10 +271,8 @@ const {
   function switchTab(nextTab: TabId, scrollToTabs = false) {
     playSound('click');
     setActiveTab(nextTab);
-    if (nextTab === 'interactive' && activeTopic) {
-      setVisitedPracticeIds((prev) =>
-        prev.includes(activeTopic.id) ? prev : [...prev, activeTopic.id]
-      );
+    if (activeTopic) {
+      syncLessonUrl(activeTopic.id, nextTab);
     }
     if (scrollToTabs) {
       setTimeout(() => {
@@ -307,6 +344,19 @@ const {
     ? Math.round((completedIds.length / topics.length) * 100)
     : 0;
 
+  async function autoCompleteTopic(topicId: string) {
+    if (!profile || completedIds.includes(topicId)) return;
+    setCompletedIds((prev) => (prev.includes(topicId) ? prev : [...prev, topicId]));
+    playSound('celebrate');
+    setConfettiKey((k) => k + 1);
+    await supabase.from('topic_progress').upsert({
+      student_id: profile.id,
+      topic_id: topicId,
+      completed: true,
+      updated_at: new Date().toISOString(),
+    });
+  }
+
   async function toggleComplete(topicId: string) {
     if (!profile) {
       alert('Войди в аккаунт, чтобы сохранять прогресс.');
@@ -333,18 +383,51 @@ const {
   function handlePracticeSolved(totalSolved: number) {
     if (!activeTopic) return;
     const current = starsMap[activeTopic.id];
-    if (!current?.practice_done && totalSolved >= 3) {
+    const becameDone = !current?.practice_done && totalSolved >= PRACTICE_STAR_TARGET;
+    if (becameDone) {
       setConfettiKey((k) => k + 1);
     }
     reportPracticeSolved(activeTopic.id, totalSolved);
+
+    const hasSlides =
+      Boolean(current?.slides_done) || slidesDoneIds.includes(activeTopic.id);
+    const hasPractice =
+      Boolean(current?.practice_done) || totalSolved >= PRACTICE_STAR_TARGET;
+    const hasHomework = Boolean(current?.homework_done);
+    if (hasSlides && hasPractice && hasHomework) {
+      void autoCompleteTopic(activeTopic.id);
+    }
   }
 
   function handleSlidesCompleted() {
     if (!activeTopic) return;
-    setConfettiKey((k) => k + 1);
+    const current = starsMap[activeTopic.id];
+    if (!current?.slides_done) {
+      setConfettiKey((k) => k + 1);
+    }
     setSlidesDoneIds((prev) =>
       prev.includes(activeTopic.id) ? prev : [...prev, activeTopic.id]
     );
+    markSlidesDone(activeTopic.id);
+
+    if (current?.practice_done && current?.homework_done) {
+      void autoCompleteTopic(activeTopic.id);
+    }
+  }
+
+  function handleHomeworkDone() {
+    if (!activeTopic) return;
+    const current = starsMap[activeTopic.id];
+    if (!current?.homework_done) {
+      setConfettiKey((k) => k + 1);
+    }
+    markHomeworkDone(activeTopic.id);
+
+    const hasSlides =
+      Boolean(current?.slides_done) || slidesDoneIds.includes(activeTopic.id);
+    if (hasSlides && current?.practice_done) {
+      void autoCompleteTopic(activeTopic.id);
+    }
   }
 
   async function handleAddTopic(e: React.FormEvent) {
@@ -402,31 +485,90 @@ const {
     ? topicBadgeMap.get(activeTopic.id)
     : undefined;
 
+  const activeStars = activeTopic ? starsMap[activeTopic.id] : undefined;
   const isTopicDone = activeTopic ? completedIds.includes(activeTopic.id) : false;
-  const starTheory = activeTopic
-    ? isTopicDone || slidesDoneIds.includes(activeTopic.id)
-    : false;
-  const starPractice = activeTopic
-    ? isTopicDone || visitedPracticeIds.includes(activeTopic.id)
-    : false;
-  const starLesson = isTopicDone;
 
-  const currentThemeMeta =
-    THEME_OPTIONS.find((t) => t.id === theme) || THEME_OPTIONS[0];
+  // Каждая звезда зажигается честно по своему шагу (без автоподстановки от isTopicDone)
+  const slidesStar = activeTopic
+    ? Boolean(activeStars?.slides_done) || slidesDoneIds.includes(activeTopic.id)
+    : false;
+  const practiceStar = Boolean(activeStars?.practice_done);
+  const homeworkStar = Boolean(activeStars?.homework_done);
 
-  const tabs: { id: TabId; label: string; shortLabel: string; star?: boolean }[] =
-    teacherMode
-      ? [
-          { id: 'theory', label: '📘 1. Понять', shortLabel: '📘 Понять', star: starTheory },
-          { id: 'interactive', label: '🎮 2. Потренироваться', shortLabel: '🎮 Тренажёр', star: starPractice },
-          { id: 'homework', label: '📝 3. Сдать ДЗ', shortLabel: '📝 ДЗ', star: starLesson },
-          { id: 'passport', label: '📋 Паспорт КТП', shortLabel: '📋 КТП' },
-        ]
-      : [
-          { id: 'theory', label: '📘 1. Понять', shortLabel: '📘 Понять', star: starTheory },
-          { id: 'interactive', label: '🎮 2. Потренироваться', shortLabel: '🎮 Тренажёр', star: starPractice },
-          { id: 'homework', label: '📝 3. Сдать ДЗ', shortLabel: '📝 ДЗ', star: starLesson },
-        ];
+  const solvedCount = Math.min(
+    PRACTICE_STAR_TARGET,
+    Number(activeStars?.practice_solved || 0)
+  );
+  const earnedStarsCount =
+    (slidesStar ? 1 : 0) + (practiceStar ? 1 : 0) + (homeworkStar ? 1 : 0);
+
+  const showStarSubs = !boardMode && !teacherMode && Boolean(profile);
+
+  const tabs: {
+    id: TabId;
+    icon: string;
+    label: string;
+    shortLabel: string;
+    sub?: string;
+    star?: boolean;
+  }[] = teacherMode
+    ? [
+        {
+          id: 'theory',
+          icon: '📘',
+          label: '1. Понять',
+          shortLabel: 'Понять',
+          star: slidesStar,
+        },
+        {
+          id: 'interactive',
+          icon: '🎮',
+          label: '2. Потренироваться',
+          shortLabel: 'Тренажёр',
+          star: practiceStar,
+        },
+        {
+          id: 'homework',
+          icon: '📝',
+          label: '3. Сдать ДЗ',
+          shortLabel: 'ДЗ',
+          star: homeworkStar,
+        },
+        {
+          id: 'passport',
+          icon: '📋',
+          label: 'Паспорт КТП',
+          shortLabel: 'КТП',
+        },
+      ]
+    : [
+        {
+          id: 'theory',
+          icon: '📘',
+          label: '1. Понять',
+          shortLabel: 'Понять',
+          sub: slidesStar ? 'Пройдено' : 'Дойди до конца',
+          star: slidesStar,
+        },
+        {
+          id: 'interactive',
+          icon: '🎮',
+          label: '2. Потренироваться',
+          shortLabel: 'Тренажёр',
+          sub: practiceStar
+            ? 'Зачтено'
+            : `Решено ${solvedCount} из ${PRACTICE_STAR_TARGET}`,
+          star: practiceStar,
+        },
+        {
+          id: 'homework',
+          icon: '📝',
+          label: '3. Сдать ДЗ',
+          shortLabel: 'ДЗ',
+          sub: homeworkStar ? 'Сдано' : 'Отправь ответы',
+          star: homeworkStar,
+        },
+      ];
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -479,15 +621,8 @@ const {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            {/* Смена темы */}
-            <button
-              type="button"
-              onClick={handleCycleTheme}
-              title={`Тема: ${currentThemeMeta.label}`}
-              className="w-9 h-9 rounded-xl border border-slate-200 bg-slate-50 hover:border-indigo-300 flex items-center justify-center text-sm transition"
-            >
-              {currentThemeMeta.icon}
-            </button>
+            {/* Выбор стиля оформления */}
+            <ThemePicker compact />
 
             {/* Звук */}
             <button
@@ -537,7 +672,7 @@ const {
                 </button>
 
                 {teacherMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-60 bg-white rounded-2xl border border-slate-200 shadow-xl p-1.5 space-y-1 z-50 animate-pop">
+                  <div className="theme-popover absolute right-0 mt-2 w-60 bg-white rounded-2xl border border-slate-200 shadow-xl p-1.5 space-y-1 z-50 animate-pop">
                     <button
                       type="button"
                       onClick={() => {
@@ -618,7 +753,7 @@ const {
         </div>
       </header>
 
-      {/* Выезжающая шторка «Все темы» (на всех экранах — не съедает место внутри урока) */}
+      {/* Выезжающая шторка «Все темы» */}
       {!boardMode && drawerOpen && (
         <div
           onClick={() => setDrawerOpen(false)}
@@ -819,7 +954,7 @@ const {
       )}
 
       {/* Просторная центральная зона урока */}
-      <main className="flex-1 w-full px-3 sm:px-6 pt-5 pb-28">
+      <main className="flex-1 w-full px-3 sm:px-6 pt-4 pb-28">
         {!activeTopic ? (
           <div className="max-w-3xl mx-auto bg-white rounded-3xl border border-slate-200 p-10 text-center space-y-3">
             <div className="text-4xl">📚</div>
@@ -832,13 +967,18 @@ const {
           </div>
         ) : (
           <div
-            className={`mx-auto space-y-5 ${
+            className={`mx-auto space-y-3.5 ${
               boardMode ? 'max-w-7xl' : 'max-w-5xl'
             }`}
           >
-            {/* Живая карточка урока со звёздами */}
+            {/* Панель геймификации: уровень, XP, стрик и награды */}
+            {!boardMode && !teacherMode && profile && (
+              <GamificationHeader stats={stats} rewardBanner={rewardBanner} />
+            )}
+
+            {/* Живая компактная карточка урока */}
             <section
-              className={`bg-white rounded-3xl border-2 shadow-xs p-5 sm:p-6 space-y-4 ${
+              className={`bg-white rounded-3xl border-2 shadow-xs p-4 sm:p-5 space-y-3 ${
                 activeScheduleBadge === 'today'
                   ? 'border-emerald-400'
                   : activeScheduleBadge === 'tomorrow'
@@ -846,20 +986,20 @@ const {
                     : 'border-slate-200'
               }`}
             >
-              <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                <div className="space-y-2 min-w-0">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="space-y-1.5 min-w-0">
                   <div className="flex flex-wrap items-center gap-2 text-xs">
                     {activeScheduleBadge === 'today' && (
-                      <span className="px-2.5 py-1 rounded-full bg-emerald-500 text-white font-extrabold">
+                      <span className="px-2.5 py-0.5 rounded-full bg-emerald-500 text-white font-extrabold">
                         ● Урок сегодня
                       </span>
                     )}
                     {activeScheduleBadge === 'tomorrow' && (
-                      <span className="px-2.5 py-1 rounded-full bg-sky-500 text-white font-extrabold">
+                      <span className="px-2.5 py-0.5 rounded-full bg-sky-500 text-white font-extrabold">
                         Завтра
                       </span>
                     )}
-                    <span className="px-2.5 py-1 rounded-full bg-slate-100 font-bold text-slate-700">
+                    <span className="px-2.5 py-0.5 rounded-full bg-slate-100 font-bold text-slate-700">
                       {activeTopic.quarter} четверть
                     </span>
                     <span className="font-bold text-indigo-600">
@@ -876,35 +1016,20 @@ const {
 
                   <h2
                     className={`font-extrabold text-slate-900 leading-tight ${
-                      boardMode ? 'text-2xl sm:text-3xl' : 'text-xl sm:text-2xl'
+                      boardMode ? 'text-2xl sm:text-3xl' : 'text-lg sm:text-2xl'
                     }`}
                   >
                     {activeTopic.order_index}. {activeTopic.title}
                   </h2>
                 </div>
 
-                {/* Звёзды урока и кнопка завершения */}
+                {/* Кнопка завершения урока */}
                 {!boardMode && (
-                  <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-                    <div
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-amber-50 border border-amber-200 text-xs font-extrabold text-amber-900"
-                      title="Звёзды за шаги урока: Теория, Тренажёр, Завершение"
-                    >
-                      <span className={starTheory ? 'opacity-100' : 'opacity-25 grayscale'}>
-                        ⭐
-                      </span>
-                      <span className={starPractice ? 'opacity-100' : 'opacity-25 grayscale'}>
-                        ⭐
-                      </span>
-                      <span className={starLesson ? 'opacity-100' : 'opacity-25 grayscale'}>
-                        ⭐
-                      </span>
-                    </div>
-
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
                       onClick={() => toggleComplete(activeTopic.id)}
-                      className={`btn-tactile px-4 py-2.5 rounded-2xl text-xs sm:text-sm font-extrabold ${
+                      className={`btn-tactile px-4 py-2 rounded-2xl text-xs sm:text-sm font-extrabold ${
                         isTopicDone
                           ? 'bg-emerald-500 border-emerald-700 text-white'
                           : 'bg-slate-900 hover:bg-indigo-600 border-slate-950 text-white'
@@ -918,7 +1043,7 @@ const {
 
               {activeTopic.value_example && (
                 <div
-                  className={`p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 text-indigo-900 ${
+                  className={`px-3.5 py-2.5 rounded-2xl bg-indigo-50/70 border border-indigo-200/80 text-indigo-900 ${
                     boardMode ? 'text-sm sm:text-base' : 'text-xs sm:text-sm'
                   }`}
                 >
@@ -927,13 +1052,13 @@ const {
               )}
             </section>
 
-            {/* 3 понятных шага урока (квест-навигация) */}
+            {/* Объединённая квест-панель: 3 шага урока + звёзды прогресса */}
             <nav
               ref={tabsNavRef}
-              className="scroll-mt-20 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-xs"
+              className="scroll-mt-20 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5"
             >
               <div
-                className={`grid gap-1.5 ${
+                className={`grid gap-1.5 flex-1 ${
                   teacherMode ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'
                 }`}
               >
@@ -944,21 +1069,51 @@ const {
                       key={tab.id}
                       type="button"
                       onClick={() => switchTab(tab.id)}
-                      className={`px-2 sm:px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold transition flex items-center justify-center gap-1.5 ${
+                      className={`px-2.5 sm:px-3.5 py-2 rounded-xl transition flex items-center justify-center sm:justify-start gap-2 text-left ${
                         active
                           ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-xs'
-                          : 'text-slate-600 hover:bg-slate-100'
+                          : tab.star
+                            ? 'bg-amber-50/70 border border-amber-200 text-amber-950 hover:border-amber-300'
+                            : 'text-slate-600 hover:bg-slate-100'
                       }`}
                     >
-                      <span className="sm:hidden">{tab.shortLabel}</span>
-                      <span className="hidden sm:inline">{tab.label}</span>
-                      {tab.star && (
-                        <span className="text-xs leading-none">⭐</span>
-                      )}
+                      <span className="text-base leading-none shrink-0">
+                        {tab.star ? '⭐' : tab.icon}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-xs sm:text-sm font-extrabold truncate leading-tight">
+                          <span className="sm:hidden">{tab.shortLabel}</span>
+                          <span className="hidden sm:inline">{tab.label}</span>
+                        </div>
+                        {showStarSubs && tab.sub && (
+                          <div
+                            className={`text-[10px] font-semibold truncate hidden sm:block mt-0.5 ${
+                              active ? 'text-white/80' : 'opacity-70'
+                            }`}
+                          >
+                            {tab.sub}
+                          </div>
+                        )}
+                      </div>
                     </button>
                   );
                 })}
               </div>
+
+              {showStarSubs && (
+                <div
+                  className={`px-3 py-1.5 sm:py-2.5 rounded-xl text-xs font-extrabold text-center shrink-0 tabular-nums ${
+                    earnedStarsCount === 3
+                      ? 'bg-gradient-to-r from-amber-400 to-orange-500 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600'
+                  }`}
+                  title="Звёзды, собранные в этом уроке"
+                >
+                  {earnedStarsCount === 3
+                    ? '🏆 3 / 3'
+                    : `⭐ ${earnedStarsCount} / 3`}
+                </div>
+              )}
             </nav>
 
             {/* Содержимое активного шага */}
@@ -1014,12 +1169,13 @@ const {
                   topic={activeTopic}
                   canEdit={teacherMode}
                   profile={profile}
+                  onHomeworkSubmitted={handleHomeworkDone}
                 />
 
                 {!boardMode && !isTopicDone && (
                   <div className="rounded-3xl bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-3">
                     <div className="text-xs sm:text-sm font-bold text-emerald-900">
-                      Всё разобрал и отправил ДЗ? Зажги финальную звезду этого урока!
+                      Всё разобрал и отправил ДЗ? Отметь урок пройденным!
                     </div>
                     <button
                       type="button"

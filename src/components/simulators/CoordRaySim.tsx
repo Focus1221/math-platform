@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { randInt } from '@/lib/math/utils';
 
 interface Props {
@@ -19,7 +19,21 @@ export default function CoordRaySim({ onResult }: Props) {
   const [selected, setSelected] = useState<number[]>([]);
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
 
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearPendingTimer() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  useEffect(() => {
+    return () => clearPendingTimer();
+  }, []);
+
   function newTask(nextMode = mode) {
+    clearPendingTimer();
     setSelected([]);
     setFeedback(null);
     if (nextMode === 'point') {
@@ -36,6 +50,7 @@ export default function CoordRaySim({ onResult }: Props) {
   }
 
   function handleTickClick(val: number) {
+    clearPendingTimer();
     if (mode === 'point') {
       setSelected([val]);
       if (val === targetPoint) {
@@ -44,7 +59,7 @@ export default function CoordRaySim({ onResult }: Props) {
           ok: true,
           text: `✓ Верно! Точка A(${targetPoint}) находится на ${targetPoint} ед. отрезках от нуля.`,
         });
-        setTimeout(() => newTask('point'), 1200);
+        timerRef.current = setTimeout(() => newTask('point'), 1200);
       } else {
         onResult(false);
         const dir = val < targetPoint ? 'правее' : 'левее';
@@ -62,6 +77,7 @@ export default function CoordRaySim({ onResult }: Props) {
   }
 
   function checkInequality() {
+    clearPendingTimer();
     const expected: number[] = [];
     for (let i = ineq.a + 1; i < ineq.b; i++) expected.push(i);
     const chosen = [...selected].sort((a, b) => a - b);
@@ -75,7 +91,7 @@ export default function CoordRaySim({ onResult }: Props) {
         ok: true,
         text: `✓ Блестяще! Все натуральные решения (${expected.join(', ')}) найдены верно.`,
       });
-      setTimeout(() => newTask('inequality'), 1400);
+      timerRef.current = setTimeout(() => newTask('inequality'), 1400);
     } else {
       setFeedback({
         ok: false,
@@ -143,13 +159,31 @@ export default function CoordRaySim({ onResult }: Props) {
               width={(ineq.b - ineq.a) * 52}
               height={16}
               rx={8}
-              fill="#E0E7FF"
-              opacity={0.7}
+              fill="rgba(99, 102, 241, 0.25)"
             />
           )}
-          <line x1={40} y1={60} x2={695} y2={60} stroke="#334155" strokeWidth={3} strokeLinecap="round" />
-          <polygon points="705,60 690,52 690,68" fill="#334155" />
-          <text x={692} y={42} fontSize={14} fontWeight={700} fill="#475569">X</text>
+          <g className="text-slate-700">
+            <line
+              x1={40}
+              y1={60}
+              x2={695}
+              y2={60}
+              stroke="currentColor"
+              strokeWidth={3}
+              strokeLinecap="round"
+            />
+            <polygon points="705,60 690,52 690,68" fill="currentColor" />
+          </g>
+          <text
+            x={692}
+            y={42}
+            fontSize={14}
+            fontWeight={700}
+            className="text-slate-500"
+            fill="currentColor"
+          >
+            X
+          </text>
 
           {TICKS.map((n) => {
             const x = 40 + n * 52;
@@ -160,13 +194,21 @@ export default function CoordRaySim({ onResult }: Props) {
                 onClick={() => handleTickClick(n)}
                 className="cursor-pointer"
               >
-                <line x1={x} y1={50} x2={x} y2={70} stroke="#475569" strokeWidth={n === 0 ? 3 : 2} />
+                <line
+                  x1={x}
+                  y1={50}
+                  x2={x}
+                  y2={70}
+                  className="text-slate-500"
+                  stroke="currentColor"
+                  strokeWidth={n === 0 ? 3 : 2}
+                />
                 <circle
                   cx={x}
                   cy={60}
                   r={isSel ? 11 : 16}
-                  fill={isSel ? '#4F46E5' : 'transparent'}
-                  className="hover:fill-indigo-200/70 transition"
+                  fill={isSel ? '#6366F1' : 'transparent'}
+                  className="hover:fill-indigo-400/35 transition"
                 />
                 {isSel && <circle cx={x} cy={60} r={5} fill="#ffffff" />}
                 <text
@@ -175,12 +217,21 @@ export default function CoordRaySim({ onResult }: Props) {
                   textAnchor="middle"
                   fontSize={14}
                   fontWeight={isSel ? 800 : 600}
-                  fill={isSel ? '#4F46E5' : '#334155'}
+                  className={isSel ? undefined : 'text-slate-700'}
+                  fill={isSel ? '#6366F1' : 'currentColor'}
                 >
                   {n}
                 </text>
                 {n === 0 && (
-                  <text x={x} y={38} textAnchor="middle" fontSize={12} fontWeight={700} fill="#64748B">
+                  <text
+                    x={x}
+                    y={38}
+                    textAnchor="middle"
+                    fontSize={12}
+                    fontWeight={700}
+                    className="text-slate-500"
+                    fill="currentColor"
+                  >
                     O
                   </text>
                 )}

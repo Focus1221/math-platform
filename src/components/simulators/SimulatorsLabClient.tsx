@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import AppNav from '@/components/layout/AppNav';
+import GamificationHeader from '@/components/gamification/GamificationHeader';
 import CoordRaySim from '@/components/simulators/CoordRaySim';
 import DivisibilitySim from '@/components/simulators/DivisibilitySim';
 import FractionsSim from '@/components/simulators/FractionsSim';
@@ -10,6 +11,7 @@ import SetsVennSim from '@/components/simulators/SetsVennSim';
 import PercentGridSim from '@/components/simulators/PercentGridSim';
 import DiagramsSim from '@/components/simulators/DiagramsSim';
 import TaskGeneratorSim from '@/components/simulators/TaskGeneratorSim';
+import { useGamification } from '@/hooks/useGamification';
 import { playSound } from '@/lib/audio/sound';
 import type { Profile } from '@/types/db';
 
@@ -57,6 +59,18 @@ export default function SimulatorsLabClient({
   const [streak, setStreak] = useState(0);
   const [milestoneBanner, setMilestoneBanner] = useState('');
 
+  const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { stats, rewardBanner, reportPracticeSolved } = useGamification(
+    Boolean(profile)
+  );
+
+  useEffect(() => {
+    return () => {
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    };
+  }, []);
+
   function handleResult(isCorrect: boolean) {
     if (isCorrect) {
       const nextSolved = solved + 1;
@@ -67,7 +81,8 @@ export default function SimulatorsLabClient({
       if (nextStreak % 5 === 0) {
         playSound('celebrate');
         setMilestoneBanner(`🔥 Огонь! Серия ${nextStreak} верных ответов подряд!`);
-        setTimeout(() => setMilestoneBanner(''), 3000);
+        if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+        bannerTimerRef.current = setTimeout(() => setMilestoneBanner(''), 3000);
       } else {
         playSound('success');
       }
@@ -81,7 +96,14 @@ export default function SimulatorsLabClient({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ simId: activeSim, isCorrect }),
-      }).catch(() => {});
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (isCorrect && data?.topicId) {
+            reportPracticeSolved(data.topicId, data.nextCorrect);
+          }
+        })
+        .catch(() => {});
     }
   }
 
@@ -106,6 +128,10 @@ export default function SimulatorsLabClient({
             <span className="text-amber-600">🔥 Серия: {streak}</span>
           </div>
         </div>
+
+        {profile && (
+          <GamificationHeader stats={stats} rewardBanner={rewardBanner} />
+        )}
 
         {milestoneBanner && (
           <div className="p-3.5 rounded-2xl bg-gradient-to-r from-amber-100 to-emerald-100 border border-emerald-300 text-center text-sm font-extrabold text-emerald-950 animate-pop">
@@ -153,7 +179,7 @@ export default function SimulatorsLabClient({
           {activeSim === 'divisibility' && <DivisibilitySim onResult={handleResult} />}
           {activeSim === 'fractions_visual' && <FractionsSim onResult={handleResult} />}
           {activeSim === 'angles' && <ProtractorSim onResult={handleResult} />}
-          {activeSim === 'sets' && <SetsVennSim />}
+          {activeSim === 'sets' && <SetsVennSim onResult={handleResult} />}
           {activeSim === 'percent_grid' && <PercentGridSim onResult={handleResult} />}
           {activeSim === 'diagrams' && <DiagramsSim onResult={handleResult} />}
           {activeSim === 'generator' && (
